@@ -44,11 +44,11 @@ if __name__ == "__main__":
                     authors=",".join(item["authors"]),
                     summary=item["summary"],
                     url=item['abs'],
-                    tldr=item['AI']['tldr'],
-                    motivation=item['AI']['motivation'],
-                    method=item['AI']['method'],
-                    result=item['AI']['result'],
-                    conclusion=item['AI']['conclusion'],
+                    tldr=item.get('AI', {}).get('tldr', 'Not available'),
+                    motivation=item.get('AI', {}).get('motivation', 'Not available'),
+                    method=item.get('AI', {}).get('method', 'Not available'),
+                    result=item.get('AI', {}).get('result', 'Not available'),
+                    conclusion=item.get('AI', {}).get('conclusion', 'Not available'),
                     cate=item['categories'][0],
                     idx=next(idx)
                 )
