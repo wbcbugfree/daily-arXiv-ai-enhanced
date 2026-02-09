@@ -1,4 +1,6 @@
-Please analyze the following abstract of papers. 
+Please analyze the following paper abstract and provide your analysis entirely in {language}.
 
 Content:
 {content}
+
+Remember: Your response for every field MUST be in {language}.
