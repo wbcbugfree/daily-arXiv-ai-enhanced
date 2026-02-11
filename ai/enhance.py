@@ -165,11 +165,17 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
             return None
     return item
 
-def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
+def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, enable_thinking: bool = False, thinking_budget: int = 4096) -> List[Dict]:
     """并行处理所有数据项"""
     LocalizedStructure = create_structure(language)
-    llm = ChatOpenAI(model=model_name).with_structured_output(LocalizedStructure, method="function_calling")
+    model_kwargs = {}
+    if enable_thinking:
+        model_kwargs["enable_thinking"] = True
+        model_kwargs["thinking_budget"] = thinking_budget
+    llm = ChatOpenAI(model=model_name, model_kwargs=model_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     print('Connect to:', model_name, file=sys.stderr)
+    if enable_thinking:
+        print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
@@ -215,6 +221,8 @@ def main():
     args = parse_args()
     model_name = os.environ.get("MODEL_NAME", 'deepseek-chat')
     language = os.environ.get("LANGUAGE", 'Chinese')
+    enable_thinking = os.environ.get("ENABLE_THINKING", '').lower() == 'true'
+    thinking_budget = int(os.environ.get("THINKING_BUDGET", '4096'))
 
     # 检查并删除目标文件
     target_file = args.data.replace('.jsonl', f'_AI_enhanced_{language}.jsonl')
@@ -244,7 +252,9 @@ def main():
         data,
         model_name,
         language,
-        args.max_workers
+        args.max_workers,
+        enable_thinking,
+        thinking_budget
     )
     
     # 保存结果
