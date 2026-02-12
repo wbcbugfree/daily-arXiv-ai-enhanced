@@ -177,8 +177,10 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             "enable_thinking": True,
             "thinking_budget": thinking_budget
         }
-        extra_body_fields = getattr(ChatOpenAI, "model_fields", getattr(ChatOpenAI, "__fields__", {}))
-        if "extra_body" in extra_body_fields:
+        model_fields = getattr(ChatOpenAI, "model_fields", None)
+        if model_fields is None:
+            model_fields = getattr(ChatOpenAI, "__fields__", {})
+        if "extra_body" in model_fields:
             llm_kwargs["extra_body"] = extra_body
         else:
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
