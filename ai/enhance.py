@@ -204,39 +204,42 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     capabilities = detect_chatopenai_capabilities()
     llm_kwargs = {capabilities.model_key: model_name}
-    use_extra_body = enable_thinking and capabilities.supports_extra_body
-    if use_extra_body:
-        llm_kwargs["extra_body"] = extra_body
-    elif enable_thinking:
+    attempts = []
+    if enable_thinking:
+        if capabilities.supports_extra_body:
+            attempts.append(({**llm_kwargs, "extra_body": extra_body}, True))
         if capabilities.supports_model_kwargs:
-            llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
-        else:
-            raise TypeError(
-                "Thinking mode requires a langchain-openai version that supports extra_body or model_kwargs. "
-                "Please upgrade langchain-openai to a recent release."
+            attempts.append(({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True))
+        if not capabilities.supports_extra_body and not capabilities.supports_model_kwargs:
+            print(
+                "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
+                file=sys.stderr,
             )
+    attempts.append((llm_kwargs, False))
 
     def build_llm(kwargs: Dict) -> Any:
         """Build the ChatOpenAI chain with structured output."""
         return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
 
-    try:
-        llm = build_llm(llm_kwargs)
-    except TypeError as exc:
-        if use_extra_body and capabilities.supports_model_kwargs:
-            fallback_kwargs = dict(llm_kwargs)
-            fallback_kwargs.pop("extra_body", None)
-            fallback_kwargs["model_kwargs"] = {"extra_body": extra_body}
-            try:
-                llm = build_llm(fallback_kwargs)
-            except TypeError as fallback_exc:
-                raise fallback_exc from exc
-        else:
-            raise
+    llm = None
+    thinking_active = False
+    last_exc = None
+    for attempt_kwargs, thinking_enabled in attempts:
+        try:
+            llm = build_llm(attempt_kwargs)
+            thinking_active = thinking_enabled
+            last_exc = None
+            break
+        except TypeError as exc:
+            last_exc = exc
+    if llm is None and last_exc:
+        raise last_exc
     
     print('Connect to:', model_name, file=sys.stderr)
-    if enable_thinking:
+    if thinking_active:
         print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
+    elif enable_thinking:
+        print('Thinking mode: disabled, using standard completion.', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
