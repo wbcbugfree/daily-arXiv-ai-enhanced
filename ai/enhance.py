@@ -2,6 +2,7 @@ import os
 import json
 import sys
 import re
+import inspect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 from queue import Queue
@@ -177,28 +178,26 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             "thinking_budget": thinking_budget
         }
 
-    model_fields = getattr(ChatOpenAI, "model_fields", {})
-    if not model_fields:
-        model_fields = getattr(ChatOpenAI, "__fields__", {})
-    model_key = "model"
-    if "model" not in model_fields and "model_name" in model_fields:
-        model_key = "model_name"
-
+    init_params = inspect.signature(ChatOpenAI.__init__).parameters
+    model_key = "model" if "model" in init_params else "model_name"
     llm_kwargs = {model_key: model_name}
     if enable_thinking:
-        if "extra_body" in model_fields:
+        if "extra_body" in init_params:
             llm_kwargs["extra_body"] = extra_body
         else:
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
 
+    def build_llm(kwargs: Dict):
+        return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+
     try:
-        llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+        llm = build_llm(llm_kwargs)
     except TypeError as exc:
-        if extra_body and "extra_body" in llm_kwargs:
+        if enable_thinking and "extra_body" in llm_kwargs:
             llm_kwargs.pop("extra_body", None)
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
             try:
-                llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+                llm = build_llm(llm_kwargs)
             except TypeError:
                 raise exc
         else:
