@@ -204,18 +204,18 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     capabilities = detect_chatopenai_capabilities()
     llm_kwargs = {capabilities.model_key: model_name}
-    llm_config_attempts = []
+    config_attempts = []
     if enable_thinking:
         if capabilities.supports_extra_body:
-            llm_config_attempts.append(({**llm_kwargs, "extra_body": extra_body}, True))
+            config_attempts.append(({**llm_kwargs, "extra_body": extra_body}, True))
         if capabilities.supports_model_kwargs:
-            llm_config_attempts.append(({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True))
+            config_attempts.append(({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True))
         if not capabilities.supports_extra_body and not capabilities.supports_model_kwargs:
             print(
                 "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
                 file=sys.stderr,
             )
-    llm_config_attempts.append((llm_kwargs, False))
+    config_attempts.append((llm_kwargs, False))
 
     def build_llm(kwargs: Dict) -> Any:
         """Build the ChatOpenAI chain with structured output."""
@@ -224,15 +224,15 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     llm = None
     thinking_active = False
     errors = []
-    for attempt_kwargs, thinking_enabled in llm_config_attempts:
+    for attempt_kwargs, thinking_enabled in config_attempts:
         try:
             llm = build_llm(attempt_kwargs)
             thinking_active = thinking_enabled
             break
         except TypeError as exc:
-            errors.append(str(exc))
+            errors.append(f"{type(exc).__name__}: {exc}")
     if llm is None:
-        error_details = "; ".join(errors) if errors else "No attempts were made."
+        error_details = "; ".join(errors) if errors else "Unknown error."
         raise TypeError(f"Failed to initialize ChatOpenAI: {error_details}")
     
     print('Connect to:', model_name, file=sys.stderr)
