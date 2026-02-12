@@ -5,7 +5,7 @@ import re
 import inspect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import Any, List, Dict
 from queue import Queue
 from threading import Lock
 # INSERT_YOUR_CODE
@@ -26,12 +26,14 @@ from structure import Structure, create_structure
 
 @dataclass(frozen=True)
 class ChatOpenAICapabilities:
+    """Describe ChatOpenAI init parameter support for thinking mode."""
     model_key: str
     supports_extra_body: bool
     supports_model_kwargs: bool
 
 
 def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
+    """Inspect ChatOpenAI __init__ parameters to detect supported options."""
     try:
         init_params = inspect.signature(ChatOpenAI.__init__).parameters
     except (TypeError, ValueError) as exc:
@@ -214,17 +216,19 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                 "Please upgrade langchain-openai to a recent release."
             )
 
-    def build_llm(kwargs: Dict):
+    def build_llm(kwargs: Dict) -> Any:
+        """Build the ChatOpenAI chain with structured output."""
         return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
 
     try:
         llm = build_llm(llm_kwargs)
     except TypeError as exc:
         if use_extra_body and capabilities.supports_model_kwargs:
-            llm_kwargs.pop("extra_body", None)
-            llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
+            fallback_kwargs = dict(llm_kwargs)
+            fallback_kwargs.pop("extra_body", None)
+            fallback_kwargs["model_kwargs"] = {"extra_body": extra_body}
             try:
-                llm = build_llm(llm_kwargs)
+                llm = build_llm(fallback_kwargs)
             except TypeError as fallback_exc:
                 raise fallback_exc from exc
         else:
