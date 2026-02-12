@@ -29,7 +29,9 @@ def get_chatopenai_support():
     try:
         init_params = inspect.signature(ChatOpenAI.__init__).parameters
     except (TypeError, ValueError) as exc:
-        raise TypeError("Unable to inspect ChatOpenAI signature for thinking mode configuration.") from exc
+        raise TypeError(
+            f"Unable to inspect ChatOpenAI signature for thinking mode configuration: {exc}"
+        ) from exc
     model_key = "model" if "model" in init_params else "model_name"
     return init_params, model_key, "extra_body" in init_params, "model_kwargs" in init_params
 
@@ -195,7 +197,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     if use_extra_body:
         llm_kwargs["extra_body"] = extra_body
     elif enable_thinking:
-        if use_model_kwargs:
+        if supports_model_kwargs:
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
         else:
             raise TypeError(
@@ -206,7 +208,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     try:
         llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     except TypeError as exc:
-        if use_extra_body and supports_model_kwargs:
+        if enable_thinking and use_extra_body and supports_model_kwargs:
             llm_kwargs.pop("extra_body", None)
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
             try:
