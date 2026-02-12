@@ -168,13 +168,23 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
 def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, enable_thinking: bool = False, thinking_budget: int = 4096) -> List[Dict]:
     """并行处理所有数据项"""
     LocalizedStructure = create_structure(language)
-    model_kwargs = {}
-    # Note: enable_thinking and thinking_budget are currently not supported by ChatOpenAI API
-    # The function signature preserves these parameters for future use when API support is added
-    llm = ChatOpenAI(model=model_name, model_kwargs=model_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+    
+    # Configure thinking mode via extra_body parameter
+    extra_body = None
+    if enable_thinking:
+        extra_body = {
+            "enable_thinking": True,
+            "thinking_budget": thinking_budget
+        }
+    
+    llm = ChatOpenAI(
+        model=model_name,
+        extra_body=extra_body
+    ).with_structured_output(LocalizedStructure, method="function_calling")
+    
     print('Connect to:', model_name, file=sys.stderr)
     if enable_thinking:
-        print(f'Thinking mode: configured but not active (budget={thinking_budget}) - API does not support this feature yet', file=sys.stderr)
+        print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
