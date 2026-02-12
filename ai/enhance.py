@@ -48,7 +48,8 @@ def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
         try:
             params = inspect.signature(ChatOpenAI).parameters
         except (TypeError, ValueError):
-            pass
+            # If direct signature inspection fails, fall back to inspecting ChatOpenAI.__init__ below.
+            params = None
 
         if has_only_var_keyword_param(params):
             params = inspect.signature(ChatOpenAI.__init__).parameters
