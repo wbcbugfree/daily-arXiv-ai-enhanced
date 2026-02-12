@@ -170,11 +170,11 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     LocalizedStructure = create_structure(language)
     model_kwargs = {}
     # Note: enable_thinking and thinking_budget are currently not supported by ChatOpenAI API
-    # These parameters are kept for future compatibility but not passed to the model
+    # The function signature preserves these parameters for future use when API support is added
     llm = ChatOpenAI(model=model_name, model_kwargs=model_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     print('Connect to:', model_name, file=sys.stderr)
     if enable_thinking:
-        print(f'Thinking mode: enabled (budget={thinking_budget}) - Note: Feature not yet supported by API', file=sys.stderr)
+        print(f'Thinking mode: configured but not active (budget={thinking_budget}) - API does not support this feature yet', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
