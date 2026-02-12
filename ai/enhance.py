@@ -179,13 +179,16 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
         }
 
     init_params = inspect.signature(ChatOpenAI.__init__).parameters
+    supports_model_kwargs = "model_kwargs" in init_params
     model_key = "model" if "model" in init_params else "model_name"
     llm_kwargs = {model_key: model_name}
     if enable_thinking:
         if "extra_body" in init_params:
             llm_kwargs["extra_body"] = extra_body
-        else:
+        elif supports_model_kwargs:
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
+        else:
+            raise TypeError("ChatOpenAI does not support extra_body or model_kwargs")
 
     def build_llm(kwargs: Dict):
         return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
@@ -193,13 +196,15 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     try:
         llm = build_llm(llm_kwargs)
     except TypeError as exc:
-        if enable_thinking and "extra_body" in llm_kwargs:
+        if enable_thinking and "extra_body" in llm_kwargs and supports_model_kwargs:
             llm_kwargs.pop("extra_body", None)
-            llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
+            model_kwargs = dict(llm_kwargs.get("model_kwargs", {}))
+            model_kwargs["extra_body"] = extra_body
+            llm_kwargs["model_kwargs"] = model_kwargs
             try:
                 llm = build_llm(llm_kwargs)
-            except TypeError:
-                raise exc
+            except TypeError as fallback_exc:
+                raise fallback_exc from exc
         else:
             raise
     
