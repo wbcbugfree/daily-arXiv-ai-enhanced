@@ -4,6 +4,7 @@ import sys
 import re
 import inspect
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from typing import List, Dict
 from queue import Queue
 from threading import Lock
@@ -23,10 +24,14 @@ from langchain.prompts import (
 )
 from structure import Structure, create_structure
 
-CHATOPENAI_INIT_PARAMS = inspect.signature(ChatOpenAI.__init__).parameters
-CHATOPENAI_MODEL_KEY = "model" if "model" in CHATOPENAI_INIT_PARAMS else "model_name"
-CHATOPENAI_SUPPORTS_EXTRA_BODY = "extra_body" in CHATOPENAI_INIT_PARAMS
-CHATOPENAI_SUPPORTS_MODEL_KWARGS = "model_kwargs" in CHATOPENAI_INIT_PARAMS
+@lru_cache(maxsize=1)
+def get_chatopenai_support():
+    try:
+        init_params = inspect.signature(ChatOpenAI.__init__).parameters
+    except (TypeError, ValueError) as exc:
+        raise TypeError("Unable to inspect ChatOpenAI signature for thinking mode configuration.") from exc
+    model_key = "model" if "model" in init_params else "model_name"
+    return init_params, model_key, "extra_body" in init_params, "model_kwargs" in init_params
 
 if os.path.exists('.env'):
     dotenv.load_dotenv()
@@ -183,21 +188,25 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             "thinking_budget": thinking_budget
         }
 
-    llm_kwargs = {CHATOPENAI_MODEL_KEY: model_name}
-    use_extra_body = enable_thinking and CHATOPENAI_SUPPORTS_EXTRA_BODY
-    use_model_kwargs = enable_thinking and not use_extra_body
+    init_params, model_key, supports_extra_body, supports_model_kwargs = get_chatopenai_support()
+    llm_kwargs = {model_key: model_name}
+    use_extra_body = enable_thinking and supports_extra_body
+    use_model_kwargs = enable_thinking and (not use_extra_body) and supports_model_kwargs
     if use_extra_body:
         llm_kwargs["extra_body"] = extra_body
-    elif use_model_kwargs:
-        if CHATOPENAI_SUPPORTS_MODEL_KWARGS:
+    elif enable_thinking:
+        if use_model_kwargs:
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
         else:
-            raise TypeError("Thinking mode requires a ChatOpenAI version that supports extra_body or model_kwargs.")
+            raise TypeError(
+                "Thinking mode requires a langchain-openai version that supports extra_body or model_kwargs. "
+                "Please upgrade langchain-openai to a recent release."
+            )
 
     try:
         llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     except TypeError as exc:
-        if use_extra_body and CHATOPENAI_SUPPORTS_MODEL_KWARGS:
+        if use_extra_body and supports_model_kwargs:
             llm_kwargs.pop("extra_body", None)
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
             try:
