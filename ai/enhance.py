@@ -169,13 +169,12 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     """并行处理所有数据项"""
     LocalizedStructure = create_structure(language)
     model_kwargs = {}
-    if enable_thinking:
-        model_kwargs["enable_thinking"] = True
-        model_kwargs["thinking_budget"] = thinking_budget
+    # Note: enable_thinking and thinking_budget are currently not supported by ChatOpenAI API
+    # These parameters are kept for future compatibility but not passed to the model
     llm = ChatOpenAI(model=model_name, model_kwargs=model_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     print('Connect to:', model_name, file=sys.stderr)
     if enable_thinking:
-        print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
+        print(f'Thinking mode: enabled (budget={thinking_budget}) - Note: Feature not yet supported by API', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
