@@ -5,7 +5,6 @@ import re
 import inspect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import List, Dict
 from queue import Queue
 from threading import Lock
@@ -32,7 +31,6 @@ class ChatOpenAICapabilities:
     supports_model_kwargs: bool
 
 
-@lru_cache(maxsize=1)
 def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
     try:
         init_params = inspect.signature(ChatOpenAI.__init__).parameters
@@ -216,17 +214,17 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                 "Please upgrade langchain-openai to a recent release."
             )
 
-    def build_llm():
-        return ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+    def build_llm(kwargs: Dict):
+        return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
 
     try:
-        llm = build_llm()
+        llm = build_llm(llm_kwargs)
     except TypeError as exc:
-        if enable_thinking and use_extra_body and capabilities.supports_model_kwargs:
+        if use_extra_body and capabilities.supports_model_kwargs:
             llm_kwargs.pop("extra_body", None)
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
             try:
-                llm = build_llm()
+                llm = build_llm(llm_kwargs)
             except TypeError as fallback_exc:
                 raise fallback_exc from exc
         else:
