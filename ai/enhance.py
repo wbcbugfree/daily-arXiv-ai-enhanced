@@ -239,7 +239,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                 file=sys.stderr,
             )
 
-    for key in dict.fromkeys(model_keys):
+    for key in model_keys:
         init_strategies.append(({key: model_name}, False, f"standard({key})"))
 
     def build_llm(kwargs: Dict[str, Any]) -> Any:
