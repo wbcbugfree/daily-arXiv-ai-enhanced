@@ -37,7 +37,7 @@ class ChatOpenAICapabilities:
 def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
     """Inspect ChatOpenAI parameters to detect supported options for thinking mode."""
     try:
-        def is_generic_kwargs(signature_params: Dict[str, inspect.Parameter] | None) -> bool:
+        def has_only_var_keyword_param(signature_params: Dict[str, inspect.Parameter] | None) -> bool:
             if not signature_params:
                 return True
             if len(signature_params) != 1:
@@ -48,11 +48,11 @@ def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
         try:
             params = inspect.signature(ChatOpenAI).parameters
         except (TypeError, ValueError):
-            params = None
+            pass
 
-        if is_generic_kwargs(params):
+        if has_only_var_keyword_param(params):
             params = inspect.signature(ChatOpenAI.__init__).parameters
-            if is_generic_kwargs(params):
+            if has_only_var_keyword_param(params):
                 return ChatOpenAICapabilities(
                     model_key="model",
                     supports_extra_body=True,
@@ -267,7 +267,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
         init_errors.append(formatted_message)
         print(formatted_message, file=sys.stderr)
 
-    def should_retry_init(message: str) -> bool:
+    def is_unexpected_keyword_error(message: str) -> bool:
         lowered_message = message.lower()
         return any(pattern in lowered_message for pattern in UNEXPECTED_KEYWORD_PATTERNS)
 
@@ -278,7 +278,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             break
         except TypeError as exc:
             message = str(exc)
-            if not should_retry_init(message):
+            if not is_unexpected_keyword_error(message):
                 raise
             record_init_failure(attempt_label, message)
     if llm is None:
