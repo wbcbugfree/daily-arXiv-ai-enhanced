@@ -204,12 +204,12 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     capabilities = detect_chatopenai_capabilities()
     llm_kwargs = {capabilities.model_key: model_name}
-    initialization_strategies = []
+    init_strategies = []
     if enable_thinking:
         if capabilities.supports_extra_body:
-            initialization_strategies.append(({**llm_kwargs, "extra_body": extra_body}, True, "thinking(extra_body)"))
+            init_strategies.append(({**llm_kwargs, "extra_body": extra_body}, True, "thinking(extra_body)"))
         elif capabilities.supports_model_kwargs:
-            initialization_strategies.append(
+            init_strategies.append(
                 ({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True, "thinking(model_kwargs)")
             )
         else:
@@ -217,7 +217,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                 "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
                 file=sys.stderr,
             )
-    initialization_strategies.append((llm_kwargs, False, "standard"))
+    init_strategies.append((llm_kwargs, False, "standard"))
 
     def build_llm(kwargs: Dict) -> Any:
         """Build the ChatOpenAI chain with structured output."""
@@ -225,18 +225,22 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     llm = None
     thinking_active = False
-    initialization_errors = []
-    for attempt_kwargs, thinking_enabled, attempt_label in initialization_strategies:
+    init_errors = []
+
+    def record_init_failure(label: str, exc: TypeError) -> None:
+        message = f"{label} config failed: {exc}"
+        init_errors.append(message)
+        print(message, file=sys.stderr)
+
+    for attempt_kwargs, thinking_enabled, attempt_label in init_strategies:
         try:
             llm = build_llm(attempt_kwargs)
             thinking_active = thinking_enabled
             break
         except TypeError as exc:
-            failure_message = f"{attempt_label} config failed: {exc}"
-            initialization_errors.append(failure_message)
-            print(failure_message, file=sys.stderr)
+            record_init_failure(attempt_label, exc)
     if llm is None:
-        failure_messages = "\n".join(initialization_errors)
+        failure_messages = "\n".join(init_errors)
         raise TypeError(
             "Failed to initialize ChatOpenAI. Check your model configuration and langchain-openai version.\n"
             f"{failure_messages}"
