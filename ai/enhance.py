@@ -248,7 +248,14 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
         init_strategies.append(({key: model_name}, False, f"standard({key})"))
 
     def build_llm(kwargs: Dict[str, Any]) -> Any:
-        """Build the ChatOpenAI chain with structured output."""
+        """Build the ChatOpenAI chain with structured output.
+
+        Args:
+            kwargs: ChatOpenAI initialization parameters.
+
+        Returns:
+            A ChatOpenAI instance configured with structured output.
+        """
         return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
 
     llm = None
