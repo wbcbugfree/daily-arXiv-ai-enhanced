@@ -177,15 +177,15 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             "thinking_budget": thinking_budget
         }
 
-    model_fields = getattr(ChatOpenAI, "model_fields", None)
-    if model_fields is None:
+    model_fields = getattr(ChatOpenAI, "model_fields", {})
+    if not model_fields:
         model_fields = getattr(ChatOpenAI, "__fields__", {})
     model_key = "model"
     if "model" not in model_fields and "model_name" in model_fields:
         model_key = "model_name"
 
     llm_kwargs = {model_key: model_name}
-    if extra_body:
+    if enable_thinking:
         if "extra_body" in model_fields:
             llm_kwargs["extra_body"] = extra_body
         else:
@@ -194,10 +194,13 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     try:
         llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     except TypeError as exc:
-        if extra_body and "extra_body" in llm_kwargs and "extra_body" in str(exc):
+        if extra_body and "extra_body" in llm_kwargs:
             llm_kwargs.pop("extra_body", None)
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
-            llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+            try:
+                llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+            except TypeError:
+                raise exc
         else:
             raise
     
