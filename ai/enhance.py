@@ -35,19 +35,23 @@ class ChatOpenAICapabilities:
 def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
     """Inspect ChatOpenAI parameters to detect supported options for thinking mode."""
     try:
+        def is_generic_kwargs(signature_params: Dict[str, inspect.Parameter] | None) -> bool:
+            if not signature_params:
+                return True
+            if len(signature_params) != 1:
+                return False
+            return next(iter(signature_params.values())).kind == inspect.Parameter.VAR_KEYWORD
+
         params = None
         try:
             params = inspect.signature(ChatOpenAI).parameters
         except (TypeError, ValueError):
             params = None
 
-        if not params or (
-            len(params) == 1
-            and next(iter(params.values())).kind == inspect.Parameter.VAR_KEYWORD
-        ):
+        if is_generic_kwargs(params):
             params = inspect.signature(ChatOpenAI.__init__).parameters
 
-        if len(params) == 1 and next(iter(params.values())).kind == inspect.Parameter.VAR_KEYWORD:
+        if is_generic_kwargs(params):
             return ChatOpenAICapabilities(
                 model_key="model",
                 supports_extra_body=True,
