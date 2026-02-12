@@ -204,18 +204,18 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     capabilities = detect_chatopenai_capabilities()
     llm_kwargs = {capabilities.model_key: model_name}
-    attempts = []
+    llm_config_attempts = []
     if enable_thinking:
         if capabilities.supports_extra_body:
-            attempts.append(({**llm_kwargs, "extra_body": extra_body}, True))
+            llm_config_attempts.append(({**llm_kwargs, "extra_body": extra_body}, True))
         if capabilities.supports_model_kwargs:
-            attempts.append(({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True))
+            llm_config_attempts.append(({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True))
         if not capabilities.supports_extra_body and not capabilities.supports_model_kwargs:
             print(
                 "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
                 file=sys.stderr,
             )
-    attempts.append((llm_kwargs, False))
+    llm_config_attempts.append((llm_kwargs, False))
 
     def build_llm(kwargs: Dict) -> Any:
         """Build the ChatOpenAI chain with structured output."""
@@ -224,11 +224,10 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     llm = None
     thinking_active = False
     last_exc = None
-    for attempt_kwargs, thinking_enabled in attempts:
+    for attempt_kwargs, thinking_enabled in llm_config_attempts:
         try:
             llm = build_llm(attempt_kwargs)
             thinking_active = thinking_enabled
-            last_exc = None
             break
         except TypeError as exc:
             last_exc = exc
