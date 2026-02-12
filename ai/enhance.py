@@ -234,15 +234,18 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             failure_message = f"{attempt_label} config failed: {exc}"
             errors.append(failure_message)
             print(failure_message, file=sys.stderr)
+            if not thinking_enabled:
+                break
     if llm is None:
         error_details = "; ".join(errors)
         raise TypeError(f"Failed to initialize ChatOpenAI: {error_details}")
 
     print('Connect to:', model_name, file=sys.stderr)
-    if thinking_active:
-        print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
-    elif enable_thinking:
-        print('Thinking mode: requested but unavailable, using standard completion.', file=sys.stderr)
+    if enable_thinking:
+        if thinking_active:
+            print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
+        else:
+            print('Thinking mode: requested but unavailable, using standard completion.', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
