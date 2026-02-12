@@ -171,16 +171,19 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     
     # Configure thinking mode via extra_body parameter
     extra_body = None
+    llm_kwargs = {"model": model_name}
     if enable_thinking:
         extra_body = {
             "enable_thinking": True,
             "thinking_budget": thinking_budget
         }
+        extra_body_fields = getattr(ChatOpenAI, "model_fields", getattr(ChatOpenAI, "__fields__", {}))
+        if "extra_body" in extra_body_fields:
+            llm_kwargs["extra_body"] = extra_body
+        else:
+            llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
     
-    llm = ChatOpenAI(
-        model=model_name,
-        extra_body=extra_body
-    ).with_structured_output(LocalizedStructure, method="function_calling")
+    llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     
     print('Connect to:', model_name, file=sys.stderr)
     if enable_thinking:
