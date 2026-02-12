@@ -231,9 +231,11 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             break
         except TypeError as exc:
             attempt_label = "thinking" if thinking_enabled else "standard"
-            errors.append(f"{attempt_label} config failed: {exc}")
+            failure_message = f"{attempt_label} config failed: {exc}"
+            errors.append(failure_message)
+            print(failure_message, file=sys.stderr)
     if llm is None:
-        error_details = "; ".join(errors) if errors else "No configuration attempts were made."
+        error_details = "; ".join(errors)
         raise TypeError(f"Failed to initialize ChatOpenAI: {error_details}")
 
     print('Connect to:', model_name, file=sys.stderr)
