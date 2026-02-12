@@ -208,9 +208,9 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     if enable_thinking:
         if capabilities.supports_extra_body:
             config_attempts.append(({**llm_kwargs, "extra_body": extra_body}, True))
-        if capabilities.supports_model_kwargs:
+        elif capabilities.supports_model_kwargs:
             config_attempts.append(({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True))
-        if not capabilities.supports_extra_body and not capabilities.supports_model_kwargs:
+        else:
             print(
                 "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
                 file=sys.stderr,
