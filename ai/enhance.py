@@ -23,6 +23,11 @@ from langchain.prompts import (
 )
 from structure import Structure, create_structure
 
+CHATOPENAI_INIT_PARAMS = inspect.signature(ChatOpenAI.__init__).parameters
+CHATOPENAI_MODEL_KEY = "model" if "model" in CHATOPENAI_INIT_PARAMS else "model_name"
+CHATOPENAI_SUPPORTS_EXTRA_BODY = "extra_body" in CHATOPENAI_INIT_PARAMS
+CHATOPENAI_SUPPORTS_MODEL_KWARGS = "model_kwargs" in CHATOPENAI_INIT_PARAMS
+
 if os.path.exists('.env'):
     dotenv.load_dotenv()
 template = open("template.txt", "r").read()
@@ -178,31 +183,25 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             "thinking_budget": thinking_budget
         }
 
-    init_params = inspect.signature(ChatOpenAI.__init__).parameters
-    supports_model_kwargs = "model_kwargs" in init_params
-    model_key = "model" if "model" in init_params else "model_name"
-    llm_kwargs = {model_key: model_name}
-    if enable_thinking:
-        if "extra_body" in init_params:
-            llm_kwargs["extra_body"] = extra_body
-        elif supports_model_kwargs:
+    llm_kwargs = {CHATOPENAI_MODEL_KEY: model_name}
+    use_extra_body = enable_thinking and CHATOPENAI_SUPPORTS_EXTRA_BODY
+    use_model_kwargs = enable_thinking and not use_extra_body
+    if use_extra_body:
+        llm_kwargs["extra_body"] = extra_body
+    elif use_model_kwargs:
+        if CHATOPENAI_SUPPORTS_MODEL_KWARGS:
             llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
         else:
-            raise TypeError("ChatOpenAI does not support extra_body or model_kwargs")
-
-    def build_llm(kwargs: Dict):
-        return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
+            raise TypeError("Thinking mode requires a ChatOpenAI version that supports extra_body or model_kwargs.")
 
     try:
-        llm = build_llm(llm_kwargs)
+        llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
     except TypeError as exc:
-        if enable_thinking and "extra_body" in llm_kwargs and supports_model_kwargs:
+        if use_extra_body and CHATOPENAI_SUPPORTS_MODEL_KWARGS:
             llm_kwargs.pop("extra_body", None)
-            model_kwargs = dict(llm_kwargs.get("model_kwargs", {}))
-            model_kwargs["extra_body"] = extra_body
-            llm_kwargs["model_kwargs"] = model_kwargs
+            llm_kwargs["model_kwargs"] = {"extra_body": extra_body}
             try:
-                llm = build_llm(llm_kwargs)
+                llm = ChatOpenAI(**llm_kwargs).with_structured_output(LocalizedStructure, method="function_calling")
             except TypeError as fallback_exc:
                 raise fallback_exc from exc
         else:
