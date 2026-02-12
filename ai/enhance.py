@@ -148,7 +148,7 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
         "result": "Result analysis unavailable",
         "conclusion": "Conclusion extraction failed"
     }
-    
+
     try:
         response: Structure = chain.invoke({
             "language": language,
@@ -178,7 +178,7 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
         # Catch any other exceptions and provide default values
         print(f"Unexpected error for {item.get('id', 'unknown')}: {e}", file=sys.stderr)
         item['AI'] = default_ai_fields
-    
+
     # Final validation to ensure all required fields exist
     for field in default_ai_fields.keys():
         if field not in item['AI']:
@@ -193,7 +193,7 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
 def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, enable_thinking: bool = False, thinking_budget: int = 4096) -> List[Dict]:
     """并行处理所有数据项"""
     LocalizedStructure = create_structure(language)
-    
+
     # Configure thinking mode via extra_body parameter
     extra_body = None
     if enable_thinking:
@@ -235,7 +235,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     if llm is None:
         error_details = "; ".join(errors) if errors else "No configuration attempts were made."
         raise TypeError(f"Failed to initialize ChatOpenAI: {error_details}")
-    
+
     print('Connect to:', model_name, file=sys.stderr)
     if thinking_active:
         print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
