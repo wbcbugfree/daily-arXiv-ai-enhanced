@@ -223,18 +223,17 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     llm = None
     thinking_active = False
-    last_exc = None
+    errors = []
     for attempt_kwargs, thinking_enabled in llm_config_attempts:
         try:
             llm = build_llm(attempt_kwargs)
             thinking_active = thinking_enabled
             break
         except TypeError as exc:
-            last_exc = exc
+            errors.append(str(exc))
     if llm is None:
-        if last_exc:
-            raise last_exc
-        raise TypeError("Failed to initialize ChatOpenAI.")
+        error_details = "; ".join(errors) if errors else "No attempts were made."
+        raise TypeError(f"Failed to initialize ChatOpenAI: {error_details}")
     
     print('Connect to:', model_name, file=sys.stderr)
     if thinking_active:
