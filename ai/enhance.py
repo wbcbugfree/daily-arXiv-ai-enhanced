@@ -52,19 +52,16 @@ def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
 
         if is_generic_kwargs(params):
             params = inspect.signature(ChatOpenAI.__init__).parameters
-
-        if is_generic_kwargs(params):
-            return ChatOpenAICapabilities(
-                model_key="model",
-                supports_extra_body=True,
-                supports_model_kwargs=True,
-            )
+            if is_generic_kwargs(params):
+                return ChatOpenAICapabilities(
+                    model_key="model",
+                    supports_extra_body=True,
+                    supports_model_kwargs=True,
+                )
     except (TypeError, ValueError) as exc:
         raise TypeError(
             f"Unable to inspect ChatOpenAI signature for thinking mode configuration: {exc}"
         ) from exc
-    if not params:
-        raise TypeError("Unable to inspect ChatOpenAI signature for thinking mode configuration.")
     model_key = "model" if "model" in params else "model_name"
     return ChatOpenAICapabilities(
         model_key=model_key,
