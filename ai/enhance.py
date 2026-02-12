@@ -258,13 +258,12 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
     thinking_active = False
     init_errors = []
 
-    def record_init_failure(label: str, exc: TypeError) -> None:
-        message = f"{label} config failed: {exc}"
-        init_errors.append(message)
-        print(message, file=sys.stderr)
+    def record_init_failure(label: str, message: str) -> None:
+        formatted_message = f"{label} config failed: {message}"
+        init_errors.append(formatted_message)
+        print(formatted_message, file=sys.stderr)
 
-    def should_retry_init(exc: TypeError) -> bool:
-        message = str(exc)
+    def should_retry_init(message: str) -> bool:
         return any(pattern in message for pattern in UNEXPECTED_KEYWORD_PATTERNS)
 
     for attempt_kwargs, thinking_enabled, attempt_label in init_strategies:
@@ -273,9 +272,10 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             thinking_active = thinking_enabled
             break
         except TypeError as exc:
-            if not should_retry_init(exc):
+            message = str(exc)
+            if not should_retry_init(message):
                 raise
-            record_init_failure(attempt_label, exc)
+            record_init_failure(attempt_label, message)
     if llm is None:
         failure_messages = "\n".join(init_errors)
         raise TypeError(
