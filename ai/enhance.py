@@ -261,7 +261,8 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
         print(formatted_message, file=sys.stderr)
 
     def should_retry_init(message: str) -> bool:
-        return any(pattern in message for pattern in UNEXPECTED_KEYWORD_PATTERNS)
+        lowered_message = message.lower()
+        return any(pattern in lowered_message for pattern in UNEXPECTED_KEYWORD_PATTERNS)
 
     for attempt_kwargs, thinking_enabled, attempt_label in init_strategies:
         try:
