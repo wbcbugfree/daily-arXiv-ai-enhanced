@@ -24,6 +24,8 @@ from langchain.prompts import (
 )
 from structure import Structure, create_structure
 
+UNEXPECTED_KEYWORD_PATTERNS = ("unexpected keyword argument", "got an unexpected keyword")
+
 @dataclass(frozen=True)
 class ChatOpenAICapabilities:
     """Describe ChatOpenAI init parameter support for thinking mode."""
@@ -61,6 +63,8 @@ def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
         raise TypeError(
             f"Unable to inspect ChatOpenAI signature for thinking mode configuration: {exc}"
         ) from exc
+    if not params:
+        raise TypeError("Unable to inspect ChatOpenAI signature for thinking mode configuration.")
     model_key = "model" if "model" in params else "model_name"
     return ChatOpenAICapabilities(
         model_key=model_key,
@@ -261,7 +265,7 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
 
     def should_retry_init(exc: TypeError) -> bool:
         message = str(exc)
-        return "unexpected keyword argument" in message or "got an unexpected keyword" in message
+        return any(pattern in message for pattern in UNEXPECTED_KEYWORD_PATTERNS)
 
     for attempt_kwargs, thinking_enabled, attempt_label in init_strategies:
         try:
