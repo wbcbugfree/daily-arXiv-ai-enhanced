@@ -5,7 +5,7 @@ import re
 import inspect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, List, Dict
+from typing import Any, Dict, List
 from queue import Queue
 from threading import Lock
 # INSERT_YOUR_CODE
@@ -33,18 +33,35 @@ class ChatOpenAICapabilities:
 
 
 def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
-    """Inspect ChatOpenAI __init__ parameters to detect supported options."""
+    """Inspect ChatOpenAI parameters to detect supported options for thinking mode."""
     try:
-        init_params = inspect.signature(ChatOpenAI.__init__).parameters
+        params = None
+        try:
+            params = inspect.signature(ChatOpenAI).parameters
+        except (TypeError, ValueError):
+            params = None
+
+        if not params or (
+            len(params) == 1
+            and next(iter(params.values())).kind == inspect.Parameter.VAR_KEYWORD
+        ):
+            params = inspect.signature(ChatOpenAI.__init__).parameters
+
+        if len(params) == 1 and next(iter(params.values())).kind == inspect.Parameter.VAR_KEYWORD:
+            return ChatOpenAICapabilities(
+                model_key="model",
+                supports_extra_body=True,
+                supports_model_kwargs=True,
+            )
     except (TypeError, ValueError) as exc:
         raise TypeError(
             f"Unable to inspect ChatOpenAI signature for thinking mode configuration: {exc}"
         ) from exc
-    model_key = "model" if "model" in init_params else "model_name"
+    model_key = "model" if "model" in params else "model_name"
     return ChatOpenAICapabilities(
         model_key=model_key,
-        supports_extra_body="extra_body" in init_params,
-        supports_model_kwargs="model_kwargs" in init_params,
+        supports_extra_body="extra_body" in params,
+        supports_model_kwargs="model_kwargs" in params,
     )
 
 if os.path.exists('.env'):
@@ -202,24 +219,30 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             "thinking_budget": thinking_budget
         }
 
-    capabilities = detect_chatopenai_capabilities()
-    llm_kwargs = {capabilities.model_key: model_name}
     init_strategies = []
+    model_keys = ["model", "model_name"]
     if enable_thinking:
+        capabilities = detect_chatopenai_capabilities()
+        model_keys = [capabilities.model_key]
+        thinking_kwargs: Dict[str, Any] = {capabilities.model_key: model_name}
         if capabilities.supports_extra_body:
-            init_strategies.append(({**llm_kwargs, "extra_body": extra_body}, True, "thinking(extra_body)"))
+            init_strategies.append(
+                ({**thinking_kwargs, "extra_body": extra_body}, True, "thinking(extra_body)")
+            )
         elif capabilities.supports_model_kwargs:
             init_strategies.append(
-                ({**llm_kwargs, "model_kwargs": {"extra_body": extra_body}}, True, "thinking(model_kwargs)")
+                ({**thinking_kwargs, "model_kwargs": {"extra_body": extra_body}}, True, "thinking(model_kwargs)")
             )
         else:
             print(
                 "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
                 file=sys.stderr,
             )
-    init_strategies.append((llm_kwargs, False, "standard"))
 
-    def build_llm(kwargs: Dict) -> Any:
+    for key in dict.fromkeys(model_keys):
+        init_strategies.append(({key: model_name}, False, f"standard({key})"))
+
+    def build_llm(kwargs: Dict[str, Any]) -> Any:
         """Build the ChatOpenAI chain with structured output."""
         return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
 
@@ -232,12 +255,18 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
         init_errors.append(message)
         print(message, file=sys.stderr)
 
+    def should_retry_init(exc: TypeError) -> bool:
+        message = str(exc)
+        return "unexpected keyword argument" in message or "got an unexpected keyword" in message
+
     for attempt_kwargs, thinking_enabled, attempt_label in init_strategies:
         try:
             llm = build_llm(attempt_kwargs)
             thinking_active = thinking_enabled
             break
         except TypeError as exc:
+            if not should_retry_init(exc):
+                raise
             record_init_failure(attempt_label, exc)
     if llm is None:
         failure_messages = "\n".join(init_errors)
