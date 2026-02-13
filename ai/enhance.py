@@ -3,6 +3,7 @@ import json
 import sys
 import re
 import inspect
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Dict, List
@@ -173,7 +174,6 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
     }
 
     # Retry logic: attempt up to max_retries times
-    last_exception = None
     for attempt in range(max_retries):
         try:
             response: Structure = chain.invoke({
@@ -186,9 +186,9 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
                 print(f"Success on attempt {attempt + 1} for {item.get('id', 'unknown')}", file=sys.stderr)
             break
         except langchain_core.exceptions.OutputParserException as e:
-            last_exception = e
             if attempt < max_retries - 1:
                 print(f"OutputParserException on attempt {attempt + 1} for {item.get('id', 'unknown')}, retrying...", file=sys.stderr)
+                time.sleep(1)  # Brief delay before retry to avoid hammering the API
                 continue
             
             # Final attempt failed, try to extract partial data
@@ -210,9 +210,9 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
             item['AI'] = {**default_ai_fields, **partial_data}
             print(f"Using partial AI data after {max_retries} attempts for {item.get('id', 'unknown')}: {list(partial_data.keys())}", file=sys.stderr)
         except Exception as e:
-            last_exception = e
             if attempt < max_retries - 1:
                 print(f"Error on attempt {attempt + 1} for {item.get('id', 'unknown')}: {e}, retrying...", file=sys.stderr)
+                time.sleep(1)  # Brief delay before retry to avoid hammering the API
                 continue
             
             # All retries failed, use default values
