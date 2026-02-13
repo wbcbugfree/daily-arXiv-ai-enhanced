@@ -82,7 +82,7 @@ def parse_args():
     parser.add_argument("--max_workers", type=int, default=1, help="Maximum number of parallel workers")
     return parser.parse_args()
 
-def process_single_item(chain, item: Dict, language: str) -> Dict:
+def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) -> Dict:
     def is_sensitive(content: str) -> bool:
         """
         调用 spam.dw-dengwei.workers.dev 接口检测内容是否包含敏感词。
@@ -172,35 +172,52 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
         "conclusion": "Conclusion extraction failed"
     }
 
-    try:
-        response: Structure = chain.invoke({
-            "language": language,
-            "content": item['summary']
-        })
-        item['AI'] = response.model_dump()
-    except langchain_core.exceptions.OutputParserException as e:
-        # 尝试从错误信息中提取 JSON 字符串并修复
-        error_msg = str(e)
-        partial_data = {}
-        
-        if "Function Structure arguments:" in error_msg:
-            try:
-                # 提取 JSON 字符串
-                json_str = error_msg.split("Function Structure arguments:", 1)[1].strip().split('are not valid JSON')[0].strip()
-                # 预处理 LaTeX 数学符号 - 使用四个反斜杠来确保正确转义
-                json_str = json_str.replace('\\', '\\\\')
-                # 尝试解析修复后的 JSON
-                partial_data = json.loads(json_str)
-            except Exception as json_e:
-                print(f"Failed to parse JSON for {item.get('id', 'unknown')}: {json_e}", file=sys.stderr)
-        
-        # Merge partial data with defaults to ensure all fields exist
-        item['AI'] = {**default_ai_fields, **partial_data}
-        print(f"Using partial AI data for {item.get('id', 'unknown')}: {list(partial_data.keys())}", file=sys.stderr)
-    except Exception as e:
-        # Catch any other exceptions and provide default values
-        print(f"Unexpected error for {item.get('id', 'unknown')}: {e}", file=sys.stderr)
-        item['AI'] = default_ai_fields
+    # Retry logic: attempt up to max_retries times
+    last_exception = None
+    for attempt in range(max_retries):
+        try:
+            response: Structure = chain.invoke({
+                "language": language,
+                "content": item['summary']
+            })
+            item['AI'] = response.model_dump()
+            # Success! Break out of retry loop
+            if attempt > 0:
+                print(f"Success on attempt {attempt + 1} for {item.get('id', 'unknown')}", file=sys.stderr)
+            break
+        except langchain_core.exceptions.OutputParserException as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                print(f"OutputParserException on attempt {attempt + 1} for {item.get('id', 'unknown')}, retrying...", file=sys.stderr)
+                continue
+            
+            # Final attempt failed, try to extract partial data
+            error_msg = str(e)
+            partial_data = {}
+            
+            if "Function Structure arguments:" in error_msg:
+                try:
+                    # 提取 JSON 字符串
+                    json_str = error_msg.split("Function Structure arguments:", 1)[1].strip().split('are not valid JSON')[0].strip()
+                    # 预处理 LaTeX 数学符号 - 使用四个反斜杠来确保正确转义
+                    json_str = json_str.replace('\\', '\\\\')
+                    # 尝试解析修复后的 JSON
+                    partial_data = json.loads(json_str)
+                except Exception as json_e:
+                    print(f"Failed to parse JSON for {item.get('id', 'unknown')}: {json_e}", file=sys.stderr)
+            
+            # Merge partial data with defaults to ensure all fields exist
+            item['AI'] = {**default_ai_fields, **partial_data}
+            print(f"Using partial AI data after {max_retries} attempts for {item.get('id', 'unknown')}: {list(partial_data.keys())}", file=sys.stderr)
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                print(f"Error on attempt {attempt + 1} for {item.get('id', 'unknown')}: {e}, retrying...", file=sys.stderr)
+                continue
+            
+            # All retries failed, use default values
+            print(f"All {max_retries} attempts failed for {item.get('id', 'unknown')}: {e}", file=sys.stderr)
+            item['AI'] = default_ai_fields
 
     # Final validation to ensure all required fields exist
     for field in default_ai_fields.keys():
