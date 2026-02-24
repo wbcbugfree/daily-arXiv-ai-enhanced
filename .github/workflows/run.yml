@@ -311,6 +311,7 @@ jobs:
         # 这些文件已经保存到临时目录，所以可以安全删除
         # These files are already saved to temporary directory, so safe to remove
         rm -rf data/*.jsonl 2>/dev/null || true
+        rm -f data/*.md 2>/dev/null || true
         rm -f assets/file-list.txt 2>/dev/null || true
         
         # 检查 data 分支是否存在 / Check if data branch exists
