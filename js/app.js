@@ -505,8 +505,8 @@ function getPreferredLanguage() {
   if (browserLang.startsWith('zh')) {
     return 'Chinese';
   }
-  // Default to English for all other languages
-  return 'English';
+  // Default to Chinese for all other languages
+  return 'Chinese';
 }
 
 // Function to select the best available language for a date
@@ -514,7 +514,7 @@ function selectLanguageForDate(date, preferredLanguage = null) {
   const availableLanguages = window.dateLanguageMap?.get(date) || [];
   
   if (availableLanguages.length === 0) {
-    return 'English'; // fallback
+    return 'Chinese'; // fallback
   }
   
   // Use provided preference or detect from browser
@@ -525,8 +525,8 @@ function selectLanguageForDate(date, preferredLanguage = null) {
     return preferred;
   }
   
-  // Fallback: prefer English if available, otherwise use the first available
-  return availableLanguages.includes('English') ? 'English' : availableLanguages[0];
+  // Fallback: prefer Chinese if available, otherwise use the first available
+  return availableLanguages.includes('Chinese') ? 'Chinese' : availableLanguages[0];
 }
 
 async function fetchAvailableDates() {
