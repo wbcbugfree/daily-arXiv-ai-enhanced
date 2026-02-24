@@ -101,6 +101,9 @@ Thanks to the following special contributors for contributing code, discovering 
       <td align="center" valign="top">
         <a href="https://github.com/fengxueguiren"><img src="https://avatars.githubusercontent.com/u/153522370?v=4" width="100px;" alt="fengxueguiren"/><br /><sub><b>fengxueguiren</b></sub></a><br />
       </td>
+      <td align="center" valign="top">
+        <a href="https://github.com/zerocpp"><img src="https://avatars.githubusercontent.com/u/2630297?v=4" width="100px;" alt="fengxueguiren"/><br /><sub><b>zerocpp</b></sub></a><br />
+      </td>
    </tr>
   </tbody>
 </table>
