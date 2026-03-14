@@ -2,13 +2,9 @@ import os
 import json
 import sys
 import re
-import inspect
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from typing import Any, Dict, List
-from queue import Queue
-from threading import Lock
+from typing import Dict, List
 # INSERT_YOUR_CODE
 import requests
 
@@ -24,52 +20,6 @@ from langchain.prompts import (
     HumanMessagePromptTemplate,
 )
 from structure import Structure, create_structure
-
-UNEXPECTED_KEYWORD_PATTERNS = ("unexpected keyword argument", "got an unexpected keyword")
-
-@dataclass(frozen=True)
-class ChatOpenAICapabilities:
-    """Describe ChatOpenAI init parameter support for thinking mode."""
-    model_key: str
-    supports_extra_body: bool
-    supports_model_kwargs: bool
-
-
-def detect_chatopenai_capabilities() -> ChatOpenAICapabilities:
-    """Inspect ChatOpenAI parameters to detect supported options for thinking mode."""
-    try:
-        def has_only_var_keyword_param(signature_params: Dict[str, inspect.Parameter] | None) -> bool:
-            if not signature_params:
-                return True
-            if len(signature_params) != 1:
-                return False
-            return next(iter(signature_params.values())).kind == inspect.Parameter.VAR_KEYWORD
-
-        params = None
-        try:
-            params = inspect.signature(ChatOpenAI).parameters
-        except (TypeError, ValueError):
-            # If direct signature inspection fails, fall back to inspecting ChatOpenAI.__init__ below.
-            params = None
-
-        if has_only_var_keyword_param(params):
-            params = inspect.signature(ChatOpenAI.__init__).parameters
-            if has_only_var_keyword_param(params):
-                return ChatOpenAICapabilities(
-                    model_key="model",
-                    supports_extra_body=True,
-                    supports_model_kwargs=True,
-                )
-    except (TypeError, ValueError) as exc:
-        raise TypeError(
-            f"Unable to inspect ChatOpenAI signature for thinking mode configuration: {exc}"
-        ) from exc
-    model_key = "model" if "model" in params else "model_name"
-    return ChatOpenAICapabilities(
-        model_key=model_key,
-        supports_extra_body="extra_body" in params,
-        supports_model_kwargs="model_kwargs" in params,
-    )
 
 if os.path.exists('.env'):
     dotenv.load_dotenv()
@@ -230,81 +180,11 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
             return None
     return item
 
-def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, enable_thinking: bool = False, thinking_budget: int = 4096) -> List[Dict]:
+def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
     """并行处理所有数据项"""
     LocalizedStructure = create_structure(language)
-
-    # Configure thinking mode via extra_body parameter
-    extra_body = None
-    if enable_thinking:
-        extra_body = {
-            "enable_thinking": True,
-            "thinking_budget": thinking_budget
-        }
-
-    init_strategies = []
-    model_keys = ["model", "model_name"]
-    if enable_thinking:
-        capabilities = detect_chatopenai_capabilities()
-        model_keys = [capabilities.model_key]
-        thinking_kwargs: Dict[str, Any] = {capabilities.model_key: model_name}
-        if capabilities.supports_extra_body:
-            init_strategies.append(
-                ({**thinking_kwargs, "extra_body": extra_body}, True, "thinking(extra_body)")
-            )
-        elif capabilities.supports_model_kwargs:
-            init_strategies.append(
-                ({**thinking_kwargs, "model_kwargs": {"extra_body": extra_body}}, True, "thinking(model_kwargs)")
-            )
-        else:
-            print(
-                "Thinking mode is not supported by this ChatOpenAI version; falling back to standard mode.",
-                file=sys.stderr,
-            )
-
-    for key in model_keys:
-        init_strategies.append(({key: model_name}, False, f"standard({key})"))
-
-    def build_llm(kwargs: Dict[str, Any]) -> Any:
-        """Build the ChatOpenAI chain with structured output."""
-        return ChatOpenAI(**kwargs).with_structured_output(LocalizedStructure, method="function_calling")
-
-    llm = None
-    thinking_active = False
-    init_errors = []
-
-    def record_init_failure(label: str, message: str) -> None:
-        formatted_message = f"{label} config failed: {message}"
-        init_errors.append(formatted_message)
-        print(formatted_message, file=sys.stderr)
-
-    def is_unexpected_keyword_error(message: str) -> bool:
-        lowered_message = message.lower()
-        return any(pattern in lowered_message for pattern in UNEXPECTED_KEYWORD_PATTERNS)
-
-    for attempt_kwargs, thinking_enabled, attempt_label in init_strategies:
-        try:
-            llm = build_llm(attempt_kwargs)
-            thinking_active = thinking_enabled
-            break
-        except TypeError as exc:
-            message = str(exc)
-            if not is_unexpected_keyword_error(message):
-                raise
-            record_init_failure(attempt_label, message)
-    if llm is None:
-        failure_messages = "\n".join(init_errors)
-        raise TypeError(
-            "Failed to initialize ChatOpenAI. Check your model configuration and langchain-openai version.\n"
-            f"{failure_messages}"
-        )
-
+    llm = ChatOpenAI(model=model_name).with_structured_output(LocalizedStructure, method="function_calling")
     print('Connect to:', model_name, file=sys.stderr)
-    if enable_thinking:
-        if thinking_active:
-            print(f'Thinking mode: enabled (budget={thinking_budget})', file=sys.stderr)
-        else:
-            print('Thinking mode: requested but unavailable, using standard completion.', file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
@@ -350,8 +230,6 @@ def main():
     args = parse_args()
     model_name = os.environ.get("MODEL_NAME", 'deepseek-chat')
     language = os.environ.get("LANGUAGE", 'Chinese')
-    enable_thinking = os.environ.get("ENABLE_THINKING", '').lower() == 'true'
-    thinking_budget = int(os.environ.get("THINKING_BUDGET", '4096'))
 
     # 检查并删除目标文件
     target_file = args.data.replace('.jsonl', f'_AI_enhanced_{language}.jsonl')
@@ -381,9 +259,7 @@ def main():
         data,
         model_name,
         language,
-        args.max_workers,
-        enable_thinking,
-        thinking_budget
+        args.max_workers
     )
     
     # 保存结果
