@@ -5,8 +5,6 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List
-from queue import Queue
-from threading import Lock
 # INSERT_YOUR_CODE
 import requests
 
