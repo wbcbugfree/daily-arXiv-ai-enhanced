@@ -2,6 +2,10 @@ let currentDate = '';
 let availableDates = [];
 let currentView = 'grid'; // 'grid' 或 'list'
 let currentCategory = 'all';
+let urlCategoryParam = null; // 从URL参数中获取的category
+let urlJsonParam = null; // 从URL参数中获取的json（API模式）
+let urlAuthorParam = null; // 从URL参数中获取的author
+let urlKeywordsParam = null; // 从URL参数中获取的keywords
 let paperData = {};
 let flatpickrInstance = null;
 let isRangeMode = false;
@@ -207,17 +211,179 @@ function toggleAuthorFilter(author) {
   renderPapers();
 }
 
+// 从URL参数中获取category
+function getUrlCategory() {
+  const params = new URLSearchParams(window.location.search);
+  const category = params.get('category');
+  return category ? decodeURIComponent(category) : null;
+}
+
+// 从URL参数中获取json（API模式）
+function getJsonParam() {
+  const params = new URLSearchParams(window.location.search);
+  const json = params.get('json');
+  return json ? decodeURIComponent(json) : null;
+}
+
+// 从URL参数中获取author
+function getUrlAuthor() {
+  const params = new URLSearchParams(window.location.search);
+  const author = params.get('author');
+  return author ? decodeURIComponent(author).split(',').map(k => k.trim()).filter(k => k) : null;
+}
+
+// 从URL参数中获取keywords
+function getUrlKeywords() {
+  const params = new URLSearchParams(window.location.search);
+  const keywords = params.get('keywords');
+  return keywords ? decodeURIComponent(keywords).split(',').map(k => k.trim()).filter(k => k) : null;
+}
+
+// 检查是否以JSON模式运行
+function isJsonMode() {
+  return getUrlCategory() !== null || getJsonParam() !== null || getUrlAuthor() !== null || getUrlKeywords() !== null;
+}
+
+// 输出JSON格式的论文数据
+function outputJsonData(papers, category) {
+  const jsonData = {
+    category: category,
+    author: urlAuthorParam || null,
+    keywords: urlKeywordsParam || null,
+    count: papers.length,
+    papers: papers.map(p => ({
+      id: p.id,
+      title: p.title,
+      authors: p.authors,
+      categories: p.category,
+      summary: p.summary,
+      date: p.date,
+      url: p.url,
+      reason: p.matchReason
+    }))
+  };
+
+  // 清空页面内容
+  document.body.innerHTML = '';
+  document.head.innerHTML = '';
+
+  // 设置JSON内容
+  document.body.textContent = JSON.stringify(jsonData, null, 2);
+}
+
+// 根据category获取论文（复用现有逻辑）
+function getPapersByCategory(paperData, category) {
+  let papers = [];
+  if (category === 'all') {
+    const { sortedCategories } = getAllCategories(paperData);
+    sortedCategories.forEach(cat => {
+      if (paperData[cat]) {
+        papers = papers.concat(paperData[cat]);
+      }
+    });
+  } else if (paperData[category]) {
+    papers = paperData[category];
+  }
+  return papers;
+}
+
+// 根据keywords匹配论文（复用现有逻辑：关键词之间是"或"关系）
+function matchPapersByKeywords(papers, keywords) {
+  if (!keywords || keywords.length === 0) return papers.map(p => ({ ...p, isMatched: false, matchReason: null }));
+
+  return papers.map(paper => {
+    const matches = keywords.some(keyword => {
+      const searchText = `${paper.title} ${paper.summary}`.toLowerCase();
+      return searchText.includes(keyword.toLowerCase());
+    });
+
+    if (matches) {
+      const matchedKeywords = keywords.filter(keyword => {
+        const searchText = `${paper.title} ${paper.summary}`.toLowerCase();
+        return searchText.includes(keyword.toLowerCase());
+      });
+      return {
+        ...paper,
+        isMatched: true,
+        matchReason: matchedKeywords.length > 0 ? `关键词: ${matchedKeywords.join(', ')}` : null
+      };
+    }
+    return { ...paper, isMatched: false, matchReason: null };
+  });
+}
+
+// 根据author匹配论文（复用现有逻辑）
+function matchPapersByAuthor(papers, query_authors) {
+  if (!query_authors) return papers.map(p => ({ ...p, isMatched: false, matchReason: null }));
+
+  return papers.map(paper => {
+    const matches = query_authors.some(author => {
+      const searchText = `${paper.authors}`.toLowerCase();
+      return searchText.includes(author.toLowerCase());
+    });
+
+    if (matches) {
+      const matchedAuthors = query_authors.filter(author => {
+        const searchText = `${paper.authors}`.toLowerCase();
+        return searchText.includes(author.toLowerCase());
+      });
+      return {
+        ...paper,
+        isMatched: true,
+        matchReason: matchedAuthors.length > 0 ? `作者: ${matchedAuthors.join(', ')}` : null
+      };
+    }
+    return { ...paper, isMatched: false, matchReason: null };
+  });
+}
+
+// 组合keywords和author匹配（复用现有逻辑：关键词和作者是"或"关系）
+function matchPapersByKeywordsOrAuthor(papers, keywords, author) {
+  // 先获取关键词匹配结果
+  const keywordResults = matchPapersByKeywords(papers, keywords);
+
+  // 再获取作者匹配结果
+  const authorResults = matchPapersByAuthor(papers, author);
+
+  // 合并：关键词或作者匹配都算
+  return papers.map((paper, index) => {
+    const keywordMatch = keywordResults[index];
+    const authorMatch = authorResults[index];
+
+    const isMatched = keywordMatch.isMatched || authorMatch.isMatched;
+    const matchReasons = [];
+    if (keywordMatch.isMatched && keywordMatch.matchReason) {
+      matchReasons.push(keywordMatch.matchReason);
+    }
+    if (authorMatch.isMatched && authorMatch.matchReason) {
+      matchReasons.push(authorMatch.matchReason);
+    }
+
+    return {
+      ...paper,
+      isMatched: isMatched,
+      matchReason: matchReasons.length > 0 ? matchReasons.join(' | ') : null
+    };
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
-  
+
   fetchGitHubStats();
-  
+
   // 加载用户关键词
   loadUserKeywords();
-  
+
   // 加载用户作者
   loadUserAuthors();
-  
+
+  // 解析URL中的category、json、author和keywords参数
+  urlCategoryParam = getUrlCategory();
+  urlJsonParam = getJsonParam();
+  urlAuthorParam = getUrlAuthor();
+  urlKeywordsParam = getUrlKeywords();
+
   fetchAvailableDates().then(() => {
     if (availableDates.length > 0) {
       loadPapersByDate(availableDates[0]);
@@ -692,11 +858,30 @@ async function loadPapersByDate(date) {
     }
     
     paperData = parseJsonlData(text, date);
-    
+
     const categories = getAllCategories(paperData);
-    
+
     renderCategoryFilter(categories);
-    
+
+    // 如果URL中有category、json、author或keywords参数，直接返回JSON
+    const hasJsonParams = urlCategoryParam !== null || urlJsonParam !== null || urlAuthorParam !== null || urlKeywordsParam !== null;
+    if (hasJsonParams) {
+      // 获取基础论文列表（按category或all）
+      const targetCategory = urlCategoryParam || urlJsonParam || 'all';
+      let papers = getPapersByCategory(paperData, targetCategory);
+
+      // 应用keywords和author匹配（"或"关系）
+      if (urlKeywordsParam || urlAuthorParam) {
+        papers = matchPapersByKeywordsOrAuthor(papers, urlKeywordsParam, urlAuthorParam);
+      }
+
+      // JSON模式：只返回匹配的论文
+      papers = papers.filter(p => p.isMatched);
+
+      outputJsonData(papers, targetCategory);
+      return;
+    }
+
     renderPapers();
   } catch (error) {
     console.error('加载论文数据失败:', error);
@@ -807,14 +992,26 @@ function renderCategoryFilter(categories) {
 
 function filterByCategory(category) {
   currentCategory = category;
-  
+
+  // 如果不是JSON模式，才更新URL参数
+  if (!isJsonMode()) {
+    const url = new URL(window.location);
+    if (category === 'all') {
+      url.searchParams.delete('category');
+    } else {
+      url.searchParams.set('category', category);
+    }
+    // 使用replaceState更新URL，不刷新页面
+    window.history.replaceState({}, '', url);
+  }
+
   document.querySelectorAll('.category-button').forEach(button => {
     button.classList.toggle('active', button.dataset.category === category);
   });
-  
+
   // 保持当前激活的过滤标签
   renderFilterTags();
-  
+
   // 重置页面滚动条到顶部
   window.scrollTo({
     top: 0,
@@ -1526,11 +1723,30 @@ async function loadPapersByDateRange(startDate, endDate) {
     }
     
     paperData = allPaperData;
-    
+
     const categories = getAllCategories(paperData);
-    
+
     renderCategoryFilter(categories);
-    
+
+    // 如果URL中有category、json、author或keywords参数，直接返回JSON
+    const hasJsonParams = urlCategoryParam !== null || urlJsonParam !== null || urlAuthorParam !== null || urlKeywordsParam !== null;
+    if (hasJsonParams) {
+      // 获取基础论文列表（按category或all）
+      const targetCategory = urlCategoryParam || urlJsonParam || 'all';
+      let papers = getPapersByCategory(paperData, targetCategory);
+
+      // 应用keywords和author匹配（"或"关系）
+      if (urlKeywordsParam || urlAuthorParam) {
+        papers = matchPapersByKeywordsOrAuthor(papers, urlKeywordsParam, urlAuthorParam);
+      }
+
+      // JSON模式：只返回匹配的论文
+      papers = papers.filter(p => p.isMatched);
+
+      outputJsonData(papers, targetCategory);
+      return;
+    }
+
     renderPapers();
   } catch (error) {
     console.error('加载论文数据失败:', error);
