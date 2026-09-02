@@ -20,6 +20,17 @@ jobs:
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
+
+    - name: Restore data history before crawl
+      run: |
+        set -euo pipefail
+        mkdir -p data
+        if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+          git fetch --no-tags origin data
+          git archive FETCH_HEAD data | tar -x
+        else
+          echo "数据分支不存在，跳过历史数据恢复 / Data branch does not exist, skipping history restore"
+        fi
         
     - name: Crawl arXiv papers
       id: crawl_step
