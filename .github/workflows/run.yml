@@ -120,8 +120,10 @@ jobs:
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
+        export MAX_WORKERS="${{ vars.MAX_WORKERS || '3' }}"
         
-        python enhance.py --data ../data/${today}.jsonl
+        echo "AI enhancement workers: $MAX_WORKERS"
+        python enhance.py --data ../data/${today}.jsonl --max_workers "$MAX_WORKERS"
         
         # 检查AI处理是否成功 / Check if AI processing was successful
         if [ $? -ne 0 ]; then

@@ -26,6 +26,75 @@ if os.path.exists('.env'):
 template = open("template.txt", "r").read()
 system = open("system.txt", "r").read()
 
+DEFAULT_RETRY_DELAY_SECONDS = 1.0
+DEFAULT_RATE_LIMIT_RETRY_DELAY_SECONDS = 5.0
+
+
+def _positive_seconds(value):
+    """Return a positive numeric delay, or None for invalid values."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None
+
+
+def _error_payload(error: Exception) -> Dict:
+    """Extract the OpenAI-compatible error payload when one is available."""
+    body = getattr(error, "body", None)
+    if not isinstance(body, dict):
+        return {}
+    nested_error = body.get("error")
+    return nested_error if isinstance(nested_error, dict) else body
+
+
+def is_rate_limit_error(error: Exception) -> bool:
+    """Recognize HTTP and OpenRouter upstream-provider rate-limit errors."""
+    if getattr(error, "status_code", None) == 429:
+        return True
+
+    payload = _error_payload(error)
+    metadata = payload.get("metadata", {})
+    if payload.get("code") == 429:
+        return True
+    if isinstance(metadata, dict) and metadata.get("provider_error_code") == "upstream_429":
+        return True
+
+    error_text = str(error).lower()
+    return "error code: 429" in error_text or "temporarily rate-limited" in error_text
+
+
+def get_retry_delay_seconds(error: Exception) -> float:
+    """Read Retry-After from response headers or OpenRouter error metadata."""
+    response = getattr(error, "response", None)
+    response_headers = getattr(response, "headers", None)
+    if response_headers:
+        retry_after = _positive_seconds(
+            response_headers.get("Retry-After") or response_headers.get("retry-after")
+        )
+        if retry_after is not None:
+            return retry_after
+
+    payload = _error_payload(error)
+    metadata = payload.get("metadata", {})
+    if isinstance(metadata, dict):
+        for key in ("retry_after_seconds", "retry_after_seconds_raw"):
+            retry_after = _positive_seconds(metadata.get(key))
+            if retry_after is not None:
+                return retry_after
+
+        metadata_headers = metadata.get("headers", {})
+        if isinstance(metadata_headers, dict):
+            retry_after = _positive_seconds(
+                metadata_headers.get("Retry-After") or metadata_headers.get("retry-after")
+            )
+            if retry_after is not None:
+                return retry_after
+
+    if is_rate_limit_error(error):
+        return DEFAULT_RATE_LIMIT_RETRY_DELAY_SECONDS
+    return DEFAULT_RETRY_DELAY_SECONDS
+
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser()
@@ -134,8 +203,13 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
             print(f"Using partial AI data after {max_retries} attempts for {item.get('id', 'unknown')}: {list(partial_data.keys())}", file=sys.stderr)
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"Error on attempt {attempt + 1} for {item.get('id', 'unknown')}: {e}, retrying...", file=sys.stderr)
-                time.sleep(1)  # Brief delay before retry to avoid hammering the API
+                retry_delay = get_retry_delay_seconds(e)
+                print(
+                    f"Error on attempt {attempt + 1} for {item.get('id', 'unknown')}: "
+                    f"{e}, retrying in {retry_delay:g} seconds...",
+                    file=sys.stderr,
+                )
+                time.sleep(retry_delay)
                 continue
             
             # All retries failed, use default values
