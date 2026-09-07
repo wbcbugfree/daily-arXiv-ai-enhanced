@@ -1027,18 +1027,16 @@ function highlightMatches(text, terms, className = 'highlight-match') {
     return text;
   }
   
-  let result = text;
-  
   // 按照长度排序关键词，从长到短，避免短词先替换导致长词匹配失败
-  const sortedTerms = [...terms].sort((a, b) => b.length - a.length);
+  const sortedTerms = terms.filter(term => term.length > 0).sort((a, b) => b.length - a.length);
+  if (sortedTerms.length === 0) {
+    return text;
+  }
   
-  // 为每个词创建一个正则表达式，使用 'gi' 标志进行全局、不区分大小写的匹配
-  sortedTerms.forEach(term => {
-    const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    result = result.replace(regex, `<span class="${className}">$1</span>`);
-  });
-  
-  return result;
+  // Match the original text once so later terms cannot modify inserted HTML.
+  const pattern = sortedTerms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const regex = new RegExp(pattern, 'gi');
+  return text.replace(regex, match => `<span class="${className}">${match}</span>`);
 }
 
 // 帮助函数：格式化作者列表（用于论文卡片显示）
