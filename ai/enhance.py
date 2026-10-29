@@ -3,7 +3,10 @@ import json
 import sys
 import re
 import time
+import math
+import tempfile
 from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
+from pathlib import Path
 from threading import Event
 from typing import Dict, List
 from urllib.parse import urlparse
@@ -25,8 +28,8 @@ from structure import Structure, create_structure
 
 if os.path.exists('.env'):
     dotenv.load_dotenv()
-template = open("template.txt", "r").read()
-system = open("system.txt", "r").read()
+template = Path(__file__).with_name("template.txt").read_text(encoding="utf-8")
+system = Path(__file__).with_name("system.txt").read_text(encoding="utf-8")
 
 DEFAULT_RETRY_DELAY_SECONDS = 1.0
 DEFAULT_RATE_LIMIT_RETRY_DELAY_SECONDS = 5.0
@@ -46,7 +49,7 @@ def _positive_seconds(value):
         seconds = float(value)
     except (TypeError, ValueError):
         return None
-    return seconds if seconds > 0 else None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
 
 
 def _error_payload(error: Exception) -> Dict:
@@ -170,7 +173,7 @@ def process_single_item(
         if match:
             owner, repo = match.groups()
             # 清理 repo 名称，去掉可能的 .git 后缀或末尾的标点
-            repo = repo.rstrip(".git").rstrip(".,)")
+            repo = repo.rstrip(".,)").removesuffix(".git")
             
             full_url = f"https://github.com/{owner}/{repo}"
             code_info["code_url"] = full_url
@@ -410,7 +413,7 @@ def main():
 
     # 读取数据
     data = []
-    with open(args.data, "r") as f:
+    with open(args.data, "r", encoding="utf-8") as f:
         for line in f:
             data.append(json.loads(line))
 
@@ -433,11 +436,21 @@ def main():
         args.max_workers
     )
     
-    # 保存结果
-    with open(target_file, "w") as f:
-        for item in processed_data:
-            if item is not None:
-                f.write(json.dumps(item) + "\n")
+    # Replace the previous output only after the complete new file is written.
+    temporary_file = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=Path(target_file).parent,
+            prefix=Path(target_file).name + ".", suffix=".tmp", delete=False,
+        ) as f:
+            temporary_file = f.name
+            for item in processed_data:
+                if item is not None:
+                    f.write(json.dumps(item) + "\n")
+        os.replace(temporary_file, target_file)
+    finally:
+        if temporary_file is not None and os.path.exists(temporary_file):
+            os.remove(temporary_file)
 
 if __name__ == "__main__":
     main()

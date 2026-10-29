@@ -68,5 +68,8 @@ if __name__ == "__main__":
                     )
                 )
         markdown += "\n\n".join(papers)
-    with open(args.data.split('_')[0] + '.md', "w") as f:
+    filename = os.path.splitext(os.path.basename(args.data))[0]
+    output_name = filename.split('_AI_enhanced_', 1)[0] + '.md'
+    output_path = os.path.join(os.path.dirname(args.data), output_name)
+    with open(output_path, "w") as f:
         f.write(markdown)

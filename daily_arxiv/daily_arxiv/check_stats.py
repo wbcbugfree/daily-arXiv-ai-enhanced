@@ -11,7 +11,7 @@
 import json
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 def load_papers_data(file_path):
     """
@@ -39,8 +39,7 @@ def load_papers_data(file_path):
                     ids.add(data.get('id', ''))
         return papers, ids
     except Exception as e:
-        print(f"Error reading {file_path}: {e}", file=sys.stderr)
-        return [], set()
+        raise ValueError(f"Error reading {file_path}: {e}") from e
 
 def save_papers_data(papers, file_path):
     """
@@ -73,15 +72,22 @@ def perform_deduplication():
              - "error": 处理错误 / Processing error
     """
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_file = f"../data/{today}.jsonl"
-    history_days = 7  # 向前追溯几天的数据进行对比
-
-    if not os.path.exists(today_file):
-        print("今日数据文件不存在 / Today's data file does not exist", file=sys.stderr)
-        return "no_data"
-
     try:
+        crawl_date = os.environ.get("CRAWL_DATE", "").strip()
+        if crawl_date:
+            selected_date = datetime.strptime(crawl_date, "%Y-%m-%d").date()
+            if selected_date.isoformat() != crawl_date:
+                raise ValueError("CRAWL_DATE must use YYYY-MM-DD")
+        else:
+            selected_date = datetime.now(timezone.utc).date()
+        today = selected_date.isoformat()
+        today_file = f"../data/{today}.jsonl"
+        history_days = 7  # 向前追溯几天的数据进行对比
+
+        if not os.path.exists(today_file):
+            print("今日数据文件不存在 / Today's data file does not exist", file=sys.stderr)
+            return "no_data"
+
         today_papers, today_ids = load_papers_data(today_file)
         print(f"今日论文总数: {len(today_papers)} / Today's total papers: {len(today_papers)}", file=sys.stderr)
 
@@ -91,7 +97,7 @@ def perform_deduplication():
         # 收集历史多日 ID 集合
         history_ids = set()
         for i in range(1, history_days + 1):
-            date_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            date_str = (selected_date - timedelta(days=i)).isoformat()
             history_file = f"../data/{date_str}.jsonl"
             _, past_ids = load_papers_data(history_file)
             history_ids.update(past_ids)
@@ -162,4 +168,4 @@ def main():
         sys.exit(2)
 
 if __name__ == "__main__":
-    main() 
+    main()

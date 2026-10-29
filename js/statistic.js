@@ -4,6 +4,7 @@ let paperData = {};
 let flatpickrInstance = null;
 let isRangeMode = false;
 let allPapersData = [];
+let papersLoadRequestId = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
   // Check screen size
@@ -63,6 +64,9 @@ function toggleDatePicker() {
     // 重新初始化日期选择器以确保它反映最新的可用日期
     if (flatpickrInstance) {
       flatpickrInstance.setDate(currentDate, false);
+      if (isRangeMode) {
+        flatpickrInstance.clear(false);
+      }
     }
   } else {
     document.body.style.overflow = '';
@@ -249,10 +253,14 @@ function toggleRangeMode() {
   
   if (flatpickrInstance) {
     flatpickrInstance.set('mode', isRangeMode ? 'range' : 'single');
+    flatpickrInstance.clear(false);
   }
 }
 
 async function loadPapersByDateRange(startDate, endDate) {
+  if (startDate > endDate) {
+    [startDate, endDate] = [endDate, startDate];
+  }
   // 获取日期范围内的所有有效日期
   const validDatesInRange = availableDates.filter(date => {
     return date >= startDate && date <= endDate;
@@ -262,12 +270,14 @@ async function loadPapersByDateRange(startDate, endDate) {
     alert('No available papers in the selected date range.');
     return;
   }
+
+  const requestId = ++papersLoadRequestId;
   
   if (startDate === endDate) {  
     currentDate = startDate;
     document.getElementById('currentDate').textContent = formatDate(startDate);
   } else {
-    currentDate = `${startDate} - ${endDate}`;
+    currentDate = `${startDate} to ${endDate}`;
     document.getElementById('currentDate').textContent = `${formatDate(startDate)} - ${formatDate(endDate)}`;
   }
   
@@ -282,14 +292,19 @@ async function loadPapersByDateRange(startDate, endDate) {
   try {
     // 加载所有日期的论文数据
     const allPaperData = {};
-    allPapersData = []; // 重置全局论文数据
+    const loadedPapers = [];
     
     for (const date of validDatesInRange) {
       const selectedLanguage = selectLanguageForDate(date);
       // 从 data 分支获取数据文件
       const dataUrl = DATA_CONFIG.getDataUrl(`data/${date}_AI_enhanced_${selectedLanguage}.jsonl`);
       const response = await fetch(dataUrl);
+      if (requestId !== papersLoadRequestId) return;
+      if (!response.ok) {
+        throw new Error(`${date}: HTTP ${response.status}`);
+      }
       const text = await response.text();
+      if (requestId !== papersLoadRequestId) return;
       const dataPapers = parseJsonlData(text, date);
       
       // 合并数据
@@ -298,20 +313,12 @@ async function loadPapersByDateRange(startDate, endDate) {
           allPaperData[category] = [];
         }
         allPaperData[category] = allPaperData[category].concat(dataPapers[category]);
-        // 将论文添加到全局数组
-        allPapersData = allPapersData.concat(dataPapers[category]);
+        loadedPapers.push(...dataPapers[category]);
       });
     }
     
     paperData = allPaperData;
-
-    // 提取所有论文标题
-    const allTitle = [];
-    Object.keys(paperData).forEach(category => {
-      paperData[category].forEach(paper => {
-        allTitle.push(paper.title);
-      });
-    });
+    allPapersData = loadedPapers;
 
     // 提取关键词并进行总结
     const extractKeywords = (text) => {
@@ -394,9 +401,9 @@ async function loadPapersByDateRange(startDate, endDate) {
     });
     
     // 按日期统计关键词
-    allTitle.forEach((abstract, index) => {
-      const date = validDatesInRange[Math.floor(index / (allTitle.length / validDatesInRange.length))];
-      const keywords = extractKeywords(abstract);
+    allPapersData.forEach(paper => {
+      const date = paper.date;
+      const keywords = extractKeywords(paper.title);
       
       keywords.forEach(keyword => {
         // 更新总体统计
@@ -480,7 +487,7 @@ async function loadPapersByDateRange(startDate, endDate) {
           .attr('transform', `translate(${margin.left},${margin.top})`);
 
       // 设置比例尺
-      const x = d3.scaleTime()
+      const x = d3.scaleUtc()
         .domain(d3.extent(validDatesInRange, d => new Date(d)))
         .range([0, width]);
 
@@ -519,16 +526,16 @@ async function loadPapersByDateRange(startDate, endDate) {
         const endDate = new Date(dates[dates.length - 1]);
         
         // 检查是否跨年
-        const sameYear = startDate.getFullYear() === endDate.getFullYear();
+        const sameYear = startDate.getUTCFullYear() === endDate.getUTCFullYear();
         // 检查是否在同一个月
-        const sameMonth = sameYear && startDate.getMonth() === endDate.getMonth();
+        const sameMonth = sameYear && startDate.getUTCMonth() === endDate.getUTCMonth();
         
         if (sameMonth) {
-          return d3.timeFormat("%d"); // 只显示日
+          return d3.utcFormat("%d"); // 只显示日
         } else if (sameYear) {
-          return d3.timeFormat("%m-%d"); // 显示月-日
+          return d3.utcFormat("%m-%d"); // 显示月-日
         } else {
-          return d3.timeFormat("%Y-%m-%d"); // 显示完整日期
+          return d3.utcFormat("%Y-%m-%d"); // 显示完整日期
         }
       }
 
@@ -575,11 +582,11 @@ async function loadPapersByDateRange(startDate, endDate) {
       const endDate = new Date(validDatesInRange[validDatesInRange.length - 1]);
       let xAxisTitle = "";
       
-      if (startDate.getFullYear() === endDate.getFullYear()) {
-        if (startDate.getMonth() === endDate.getMonth()) {
-          xAxisTitle = `${startDate.getFullYear()}/${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+      if (startDate.getUTCFullYear() === endDate.getUTCFullYear()) {
+        if (startDate.getUTCMonth() === endDate.getUTCMonth()) {
+          xAxisTitle = `${startDate.getUTCFullYear()}/${String(startDate.getUTCMonth() + 1).padStart(2, '0')}`;
         } else {
-          xAxisTitle = `${startDate.getFullYear()}`;
+          xAxisTitle = `${startDate.getUTCFullYear()}`;
         }
       }
       
@@ -704,11 +711,14 @@ async function loadPapersByDateRange(startDate, endDate) {
     }
     
   } catch (error) {
+    if (requestId !== papersLoadRequestId) return;
     console.error('加载论文数据失败:', error);
+    paperData = {};
+    allPapersData = [];
     container.innerHTML = `
       <div class="loading-container">
         <p>Loading data fails. Please retry.</p>
-        <p>Error messages: ${error.message}</p>
+        <p>Error messages: ${escapeHtml(error.message)}</p>
       </div>
     `;
   }
@@ -759,8 +769,15 @@ function parseJsonlData(jsonlText, date) {
   return result;
 }
 
+function escapeHtml(text) {
+  return String(text ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[character]));
+}
+
 function formatDate(dateString) {
-  const date = new Date(dateString);
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'numeric',
@@ -787,12 +804,12 @@ function showRelatedPapers(keyword) {
     const papersHTML = relatedPapers.map((paper, index) => `
         <div class="paper-card">
             <div class="paper-number">${index + 1}</div>
-            <a href="${paper.url}" target="_blank" class="paper-title">${paper.title}</a>
-            <div class="paper-authors">${paper.authors}</div>
+            <a href="${escapeHtml(paper.url)}" target="_blank" class="paper-title">${escapeHtml(paper.title)}</a>
+            <div class="paper-authors">${escapeHtml(paper.authors)}</div>
             <div class="paper-categories">
-                ${paper.category.map(cat => `<span class="category-tag">${cat}</span>`).join('')}
+                ${paper.category.map(cat => `<span class="category-tag">${escapeHtml(cat)}</span>`).join('')}
             </div>
-            <div class="paper-summary">${paper.summary}</div>
+            <div class="paper-summary">${escapeHtml(paper.summary)}</div>
         </div>
     `).join('');
     

@@ -7,9 +7,11 @@ class ArxivSpider(scrapy.Spider):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         categories = os.environ.get("CATEGORIES", "cs.CV")
-        categories = categories.split(",")
+        categories = [category.strip() for category in categories.split(",") if category.strip()]
+        if not categories:
+            raise ValueError("CATEGORIES must contain at least one arXiv category")
         # 保存目标分类列表，用于后续验证
-        self.target_categories = set(map(str.strip, categories))
+        self.target_categories = set(categories)
         self.start_urls = [
             f"https://arxiv.org/list/{cat}/new" for cat in self.target_categories
         ]  # 起始URL（计算机科学领域的最新论文）
@@ -19,11 +21,16 @@ class ArxivSpider(scrapy.Spider):
 
     def parse(self, response):
         # 提取每篇论文的信息
-        anchors = []
+        replacement_start = None
         for li in response.css("div[id=dlpage] ul li"):
-            href = li.css("a::attr(href)").get()
-            if href and "item" in href:
-                anchors.append(int(href.split("item")[-1]))
+            link = li.css("a")
+            label = link.xpath("string(.)").get(default="").lower()
+            href = link.css("::attr(href)").get(default="")
+            if "replacement" in label:
+                anchor = re.search(r"#item(\d+)$", href)
+                if anchor:
+                    replacement_start = int(anchor.group(1))
+                    break
 
         # 遍历每篇论文的详细信息
         for paper in response.css("dl dt"):
@@ -32,7 +39,7 @@ class ArxivSpider(scrapy.Spider):
                 continue
                 
             paper_id = int(paper_anchor.split("item")[-1])
-            if anchors and paper_id >= anchors[-1]:
+            if replacement_start is not None and paper_id >= replacement_start:
                 continue
 
             # 获取论文ID

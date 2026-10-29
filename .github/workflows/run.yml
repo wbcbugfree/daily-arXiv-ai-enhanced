@@ -8,6 +8,12 @@ on:
     - cron: "30 1 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -25,11 +31,17 @@ jobs:
       run: |
         set -euo pipefail
         mkdir -p data
-        if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+        if git ls-remote --exit-code --heads origin data >/dev/null; then
           git fetch --no-tags origin data
           git archive FETCH_HEAD data | tar -x
         else
-          echo "数据分支不存在，跳过历史数据恢复 / Data branch does not exist, skipping history restore"
+          ref_status=$?
+          if [ "$ref_status" -eq 2 ]; then
+            echo "数据分支不存在，跳过历史数据恢复 / Data branch does not exist, skipping history restore"
+          else
+            echo "检查历史数据分支失败，停止工作流 / Failed to check data branch (exit $ref_status)" >&2
+            exit "$ref_status"
+          fi
         fi
         
     - name: Crawl arXiv papers
@@ -39,11 +51,9 @@ jobs:
         today=$(date -u "+%Y-%m-%d")
         echo "开始爬取 $today 的arXiv论文... / Starting to crawl $today arXiv papers..."
         
-        # 检查今日文件是否已存在，如存在则删除 / Check if today's file exists, delete if found
+        # 保留旧文件，完整性检查通过后再替换 / Replace existing data only after validation
         if [ -f "data/${today}.jsonl" ]; then
-            echo "🗑️ 发现今日文件已存在，正在删除重新生成... / Found existing today's file, deleting for fresh start..."
-            rm "data/${today}.jsonl"
-            echo "✅ 已删除现有文件：data/${today}.jsonl / Deleted existing file: data/${today}.jsonl"
+            echo "今日文件将在完整性检查通过后替换 / Today's file will be replaced after validation"
         else
             echo "📝 今日文件不存在，准备新建... / Today's file doesn't exist, ready to create new one..."
         fi
@@ -58,7 +68,7 @@ jobs:
         
         # 使用Scrapy爬取
         # Use Scrapy to crawl
-        scrapy crawl arxiv -o ../data/${today}.jsonl
+        python crawl.py --output "../data/${today}.jsonl"
         
         # 检查爬取是否成功 / Check if crawling was successful
         if [ ! -f "../data/${today}.jsonl" ]; then
@@ -71,6 +81,8 @@ jobs:
         
     - name: Check for duplicates
       id: dedup_check
+      env:
+        CRAWL_DATE: ${{ steps.crawl_step.outputs.crawl_date }}
       run: |
         source .venv/bin/activate
         echo "执行去重检查... / Performing intelligent deduplication check..."
@@ -110,6 +122,8 @@ jobs:
         
     - name: AI Enhancement Processing
       if: steps.dedup_check.outputs.has_new_content == 'true'
+      env:
+        TOKEN_GITHUB: ${{ secrets.TOKEN_GITHUB || github.token }}
       run: |
         source .venv/bin/activate
         today=${{ steps.crawl_step.outputs.crawl_date }}
@@ -174,12 +188,12 @@ jobs:
 
     - name: Generate password hash and inject into config
       if: steps.dedup_check.outputs.has_new_content == 'true'
+      env:
+        ACCESS_PASSWORD: ${{ secrets.ACCESS_PASSWORD }}
       run: |
         echo "🔐 Generating password hash for authentication..."
 
-        PASSWORD="${{ secrets.ACCESS_PASSWORD }}"
-
-        if [ -z "$PASSWORD" ]; then
+        if [ -z "$ACCESS_PASSWORD" ]; then
           echo "⚠️  WARNING: ACCESS_PASSWORD not set in Secrets"
           echo "⚠️  Password protection will be DISABLED"
           echo "⚠️  To enable password protection, add ACCESS_PASSWORD in repository Secrets"
@@ -189,7 +203,7 @@ jobs:
           PASSWORD_HASH="DISABLED_NO_PASSWORD_SET_IN_SECRETS"
         else
           # Generate SHA-256 hash using openssl
-          PASSWORD_HASH=$(echo -n "$PASSWORD" | openssl dgst -sha256 -hex | awk '{print $2}')
+          PASSWORD_HASH=$(printf '%s' "$ACCESS_PASSWORD" | openssl dgst -sha256 -hex | awk '{print $2}')
           echo "✅ Password hash generated successfully"
           echo "✅ Hash length: ${#PASSWORD_HASH} characters"
           echo "🔐 Password protection is ENABLED"
@@ -197,7 +211,22 @@ jobs:
 
         # Inject hash into auth-config.js
         if [ -f "js/auth-config.js" ]; then
-          sed -i "s/PLACEHOLDER_PASSWORD_HASH/$PASSWORD_HASH/" js/auth-config.js
+          python - "$PASSWORD_HASH" <<'PY'
+        import re
+        import sys
+        from pathlib import Path
+
+        config_path = Path('js/auth-config.js')
+        source = config_path.read_text(encoding='utf-8')
+        updated, count = re.subn(
+            r"(?m)^(\s*passwordHash:\s*)'[^']*'",
+            lambda match: match.group(1) + repr(sys.argv[1]),
+            source,
+        )
+        if count != 1:
+            raise RuntimeError(f'Expected one passwordHash property, found {count}')
+        config_path.write_text(updated, encoding='utf-8')
+        PY
           echo "✅ Password hash injected into js/auth-config.js"
         else
           echo "❌ ERROR: js/auth-config.js not found!"
@@ -241,8 +270,23 @@ jobs:
         
         # 注入仓库信息到 data-config.js / Inject repository info into data-config.js
         if [ -f "js/data-config.js" ]; then
-          sed -i "s/PLACEHOLDER_REPO_OWNER/$REPO_OWNER/g" js/data-config.js
-          sed -i "s/PLACEHOLDER_REPO_NAME/$REPO_NAME/g" js/data-config.js
+          python - "$REPO_OWNER" "$REPO_NAME" <<'PY'
+        import re
+        import sys
+        from pathlib import Path
+
+        config_path = Path('js/data-config.js')
+        source = config_path.read_text(encoding='utf-8')
+        for key, value in zip(('repoOwner', 'repoName'), sys.argv[1:]):
+            source, count = re.subn(
+                r"(?m)^(\s*" + re.escape(key) + r":\s*)'[^']*'",
+                lambda match: match.group(1) + repr(value),
+                source,
+            )
+            if count != 1:
+                raise RuntimeError(f'Expected one {key} property, found {count}')
+        config_path.write_text(source, encoding='utf-8')
+        PY
           echo "✅ 仓库信息已注入到 js/data-config.js / Repository info injected into js/data-config.js"
         else
           echo "❌ ERROR: js/data-config.js not found!"
@@ -305,8 +349,8 @@ jobs:
         mkdir -p /tmp/data_files/assets
         
         # 复制数据文件到临时目录 / Copy data files to temporary directory
-        cp -r data/* /tmp/data_files/data/ 2>/dev/null || true
-        cp assets/file-list.txt /tmp/data_files/assets/ 2>/dev/null || true
+        cp -r data/* /tmp/data_files/data/
+        cp assets/file-list.txt /tmp/data_files/assets/
         
         echo "数据文件已保存到临时目录 / Data files saved to temporary directory"
 
@@ -349,8 +393,8 @@ jobs:
         # 从临时目录恢复数据文件 / Restore data files from temporary directory
         # 确保目录存在 / Ensure directories exist
         mkdir -p data assets
-        cp -r /tmp/data_files/data/* data/ 2>/dev/null || true
-        cp /tmp/data_files/assets/file-list.txt assets/ 2>/dev/null || true
+        cp -r /tmp/data_files/data/* data/
+        cp /tmp/data_files/assets/file-list.txt assets/
         
         # 只添加数据文件 / Only add data files
         git add data/* 2>/dev/null || true
