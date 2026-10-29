@@ -121,6 +121,8 @@ jobs:
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
         export MAX_WORKERS="${{ vars.MAX_WORKERS || '3' }}"
+        export API_MODE="${{ vars.API_MODE || 'auto' }}"
+        export REASONING_EFFORT="${{ vars.REASONING_EFFORT }}"
         
         echo "AI enhancement workers: $MAX_WORKERS"
         python enhance.py --data ../data/${today}.jsonl --max_workers "$MAX_WORKERS"

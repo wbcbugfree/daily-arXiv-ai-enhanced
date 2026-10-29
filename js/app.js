@@ -802,6 +802,8 @@ function toggleRangeMode() {
   
   if (flatpickrInstance) {
     flatpickrInstance.set('mode', isRangeMode ? 'range' : 'single');
+    // A previous single date must not become an implicit range endpoint.
+    flatpickrInstance.clear(false);
   }
 }
 
@@ -1654,6 +1656,10 @@ function toggleDatePicker() {
     // 重新初始化日期选择器以确保它反映最新的可用日期
     if (flatpickrInstance) {
       flatpickrInstance.setDate(currentDate, false);
+      if (isRangeMode) {
+        // Each range selection starts with two explicit clicks.
+        flatpickrInstance.clear(false);
+      }
     }
   } else {
     document.body.style.overflow = '';
@@ -1675,9 +1681,13 @@ function formatDate(dateString) {
 }
 
 async function loadPapersByDateRange(startDate, endDate) {
+  // Normalize ISO dates so reverse selections use the same inclusive range.
+  const normalizedStartDate = startDate <= endDate ? startDate : endDate;
+  const normalizedEndDate = startDate <= endDate ? endDate : startDate;
+
   // 获取日期范围内的所有有效日期
   const validDatesInRange = availableDates.filter(date => {
-    return date >= startDate && date <= endDate;
+    return date >= normalizedStartDate && date <= normalizedEndDate;
   });
   
   if (validDatesInRange.length === 0) {
@@ -1685,8 +1695,8 @@ async function loadPapersByDateRange(startDate, endDate) {
     return;
   }
   
-  currentDate = `${startDate} to ${endDate}`;
-  document.getElementById('currentDate').textContent = `${formatDate(startDate)} - ${formatDate(endDate)}`;
+  currentDate = `${normalizedStartDate} to ${normalizedEndDate}`;
+  document.getElementById('currentDate').textContent = `${formatDate(normalizedStartDate)} - ${formatDate(normalizedEndDate)}`;
   
   // 不再重置激活的关键词和作者
   // 而是保持当前选择状态
@@ -1695,7 +1705,7 @@ async function loadPapersByDateRange(startDate, endDate) {
   container.innerHTML = `
     <div class="loading-container">
       <div class="loading-spinner"></div>
-      <p>Loading papers from ${formatDate(startDate)} to ${formatDate(endDate)}...</p>
+      <p>Loading papers from ${formatDate(normalizedStartDate)} to ${formatDate(normalizedEndDate)}...</p>
     </div>
   `;
   

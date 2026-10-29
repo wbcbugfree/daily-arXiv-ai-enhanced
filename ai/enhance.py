@@ -3,8 +3,10 @@ import json
 import sys
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
+from threading import Event
 from typing import Dict, List
+from urllib.parse import urlparse
 # INSERT_YOUR_CODE
 import requests
 
@@ -30,6 +32,14 @@ DEFAULT_RETRY_DELAY_SECONDS = 1.0
 DEFAULT_RATE_LIMIT_RETRY_DELAY_SECONDS = 5.0
 
 
+class FatalAIError(RuntimeError):
+    """Credentials or provider configuration prevent the batch from running."""
+
+
+class PaperAIError(RuntimeError):
+    """A paper exhausted retries; its fallback fields remain on the item."""
+
+
 def _positive_seconds(value):
     """Return a positive numeric delay, or None for invalid values."""
     try:
@@ -42,10 +52,51 @@ def _positive_seconds(value):
 def _error_payload(error: Exception) -> Dict:
     """Extract the OpenAI-compatible error payload when one is available."""
     body = getattr(error, "body", None)
+    if not isinstance(body, dict) and error.args:
+        body = error.args[0]
+        if hasattr(body, "model_dump"):
+            body = body.model_dump()
     if not isinstance(body, dict):
         return {}
     nested_error = body.get("error")
     return nested_error if isinstance(nested_error, dict) else body
+
+
+def is_fatal_api_error(error: Exception) -> bool:
+    """Distinguish batch-wide setup failures from transient or paper errors."""
+    payload = _error_payload(error)
+    status = getattr(error, "status_code", None)
+    if status is None and isinstance(payload.get("code"), int):
+        status = payload["code"]
+    codes = {str(payload.get(key, "")).lower() for key in ("code", "type")}
+    if status in {401, 402} or codes.intersection({
+        "invalid_api_key", "authentication_error", "model_not_found", "invalid_model",
+        "insufficient_quota", "credit_balance_exhausted",
+        "organization_spend_limit_exceeded", "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+    }):
+        return True
+
+    message = str(payload.get("message") or error).lower()
+    # A provider may reject just one abstract for length or content reasons.
+    paper_error_codes = {"context_length_exceeded", "content_policy_violation", "content_filter"}
+    paper_error_markers = ("context length", "context window", "moderation", "content policy", "content filter")
+    if codes.intersection(paper_error_codes) or any(marker in message for marker in paper_error_markers):
+        return False
+    if status in {403, 404}:
+        return True
+    if status == 400:
+        param = str(payload.get("param", "")).split(".", 1)[0].split("[", 1)[0]
+        config_params = {
+            "model", "tools", "tool_choice", "reasoning", "reasoning_effort",
+            "text", "response_format", "service_tier",
+        }
+        config_markers = (
+            "invalid model", "not a valid model", "unsupported parameter",
+            "unrecognized request argument",
+        )
+        return param in config_params or any(marker in message for marker in config_markers)
+    return False
 
 
 def is_rate_limit_error(error: Exception) -> bool:
@@ -102,7 +153,12 @@ def parse_args():
     parser.add_argument("--max_workers", type=int, default=1, help="Maximum number of parallel workers")
     return parser.parse_args()
 
-def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) -> Dict:
+def process_single_item(
+    chain, item: Dict, language: str, max_retries: int = 3, abort_event: Event | None = None
+) -> Dict:
+    if abort_event is not None and abort_event.is_set():
+        raise CancelledError("AI batch stopped after a fatal provider error")
+
     def check_github_code(content: str) -> Dict:
         """提取并验证 GitHub 链接"""
         code_info = {}
@@ -167,12 +223,19 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
 
     # Retry logic: attempt up to max_retries times
     for attempt in range(max_retries):
+        if abort_event is not None and abort_event.is_set():
+            raise CancelledError("AI batch stopped after a fatal provider error")
         try:
             response: Structure = chain.invoke({
                 "language": language,
                 "content": item['summary']
             })
             item['AI'] = response.model_dump()
+            if not any(
+                isinstance(item['AI'].get(field), str) and item['AI'][field].strip()
+                for field in default_ai_fields
+            ):
+                raise ValueError("AI returned no usable analysis")
             # Success! Break out of retry loop
             if attempt > 0:
                 print(f"Success on attempt {attempt + 1} for {item.get('id', 'unknown')}", file=sys.stderr)
@@ -198,10 +261,22 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
                 except Exception as json_e:
                     print(f"Failed to parse JSON for {item.get('id', 'unknown')}: {json_e}", file=sys.stderr)
             
-            # Merge partial data with defaults to ensure all fields exist
+            partial_data = {
+                key: value for key, value in partial_data.items()
+                if key in default_ai_fields and isinstance(value, str) and value.strip()
+            } if isinstance(partial_data, dict) else {}
+            # Keep usable partial analysis, but don't count an empty fallback as success.
             item['AI'] = {**default_ai_fields, **partial_data}
+            if not partial_data:
+                raise PaperAIError(f"No usable AI output for {item.get('id', 'unknown')}") from e
             print(f"Using partial AI data after {max_retries} attempts for {item.get('id', 'unknown')}: {list(partial_data.keys())}", file=sys.stderr)
         except Exception as e:
+            if is_fatal_api_error(e):
+                if abort_event is not None:
+                    abort_event.set()
+                raise FatalAIError(
+                    f"AI authentication or configuration failed for {item.get('id', 'unknown')}: {e}"
+                ) from e
             if attempt < max_retries - 1:
                 retry_delay = get_retry_delay_seconds(e)
                 print(
@@ -215,6 +290,7 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
             # All retries failed, use default values
             print(f"All {max_retries} attempts failed for {item.get('id', 'unknown')}: {e}", file=sys.stderr)
             item['AI'] = default_ai_fields
+            raise PaperAIError(f"AI retries exhausted for {item.get('id', 'unknown')}") from e
 
     # Final validation to ensure all required fields exist
     for field in default_ai_fields.keys():
@@ -223,25 +299,67 @@ def process_single_item(chain, item: Dict, language: str, max_retries: int = 3) 
 
     return item
 
-def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
-    """并行处理所有数据项"""
+def create_analysis_chain(model_name: str, language: str):
+    """Use Responses for OpenAI while preserving other providers' chat API."""
+    model_name = model_name.strip()
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    missing = [name for name, value in (("MODEL_NAME", model_name), ("OPENAI_API_KEY", api_key)) if not value]
+    if missing:
+        raise ValueError(f"Missing required configuration: {', '.join(missing)}")
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1"
+    parsed_url = urlparse(base_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        raise ValueError("OPENAI_BASE_URL must be an HTTP(S) URL")
+    api_mode = os.environ.get("API_MODE", "auto").strip().lower() or "auto"
+    if api_mode == "auto":
+        api_mode = "responses" if urlparse(base_url).hostname == "api.openai.com" else "chat_completions"
+    if api_mode not in {"responses", "chat_completions"}:
+        raise ValueError("API_MODE must be auto, responses, or chat_completions")
+
     LocalizedStructure = create_structure(language)
-    llm = ChatOpenAI(model=model_name).with_structured_output(LocalizedStructure, method="function_calling")
+    llm_options = {
+        "model": model_name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "use_responses_api": api_mode == "responses",
+    }
+    if api_mode == "responses":
+        # Both providers can run independent requests without server-side state.
+        llm_options["model_kwargs"] = {"store": False}
+        reasoning_effort = os.environ.get("REASONING_EFFORT", "").strip()
+        if reasoning_effort:
+            llm_options["reasoning_effort"] = reasoning_effort
+        llm = ChatOpenAI(**llm_options).with_structured_output(
+            LocalizedStructure, method="json_schema", strict=True
+        )
+    else:
+        llm = ChatOpenAI(**llm_options).with_structured_output(
+            LocalizedStructure, method="function_calling"
+        )
+
     print('Connect to:', model_name, file=sys.stderr)
+    print('API mode:', api_mode, file=sys.stderr)
     
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
         HumanMessagePromptTemplate.from_template(template=template)
     ])
 
-    chain = prompt_template | llm
+    return prompt_template | llm
+
+
+def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
+    """并行处理所有数据项"""
+    chain = create_analysis_chain(model_name, language)
     
     # 使用线程池并行处理
     processed_data = [None] * len(data)  # 预分配结果列表
+    failed_count = 0
+    abort_event = Event()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # 提交所有任务
         future_to_idx = {
-            executor.submit(process_single_item, chain, item, language): idx
+            executor.submit(process_single_item, chain, item, language, abort_event=abort_event): idx
             for idx, item in enumerate(data)
         }
         
@@ -255,7 +373,17 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
             try:
                 result = future.result()
                 processed_data[idx] = result
+            except FatalAIError:
+                abort_event.set()
+                for pending in future_to_idx:
+                    pending.cancel()
+                raise
+            except PaperAIError as e:
+                failed_count += 1
+                processed_data[idx] = data[idx]
+                print(f"Paper at index {idx} kept with fallback AI fields: {e}", file=sys.stderr)
             except Exception as e:
+                failed_count += 1
                 print(f"Item at index {idx} generated an exception: {e}", file=sys.stderr)
                 # Add default AI fields to ensure consistency
                 processed_data[idx] = data[idx]
@@ -267,6 +395,9 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                     "conclusion": "Processing failed"
                 }
     
+    if data and failed_count == len(data):
+        raise RuntimeError(f"All {len(data)} papers failed AI enhancement; refusing to publish placeholders")
+    print(f"AI enhancement results: {len(data) - failed_count} usable, {failed_count} failed, {len(data)} total", file=sys.stderr)
     return processed_data
 
 def main():
@@ -274,11 +405,8 @@ def main():
     model_name = os.environ.get("MODEL_NAME", 'deepseek-chat')
     language = os.environ.get("LANGUAGE", 'Chinese')
 
-    # 检查并删除目标文件
+    # Preserve an existing output if configuration or batch processing fails.
     target_file = args.data.replace('.jsonl', f'_AI_enhanced_{language}.jsonl')
-    if os.path.exists(target_file):
-        os.remove(target_file)
-        print(f'Removed existing file: {target_file}', file=sys.stderr)
 
     # 读取数据
     data = []
