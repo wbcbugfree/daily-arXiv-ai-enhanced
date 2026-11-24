@@ -1,6 +1,9 @@
 import scrapy
 import os
 import re
+from urllib.parse import urlsplit
+
+from daily_arxiv.metadata import enrich_papers
 
 
 class ArxivSpider(scrapy.Spider):
@@ -15,11 +18,23 @@ class ArxivSpider(scrapy.Spider):
         self.start_urls = [
             f"https://arxiv.org/list/{cat}/new" for cat in self.target_categories
         ]  # 起始URL（计算机科学领域的最新论文）
+        self.listed_items = []
+        self.remaining_listings = len(self.start_urls)
 
     name = "arxiv"  # 爬虫名称
     allowed_domains = ["arxiv.org"]  # 允许爬取的域名
 
     def parse(self, response):
+        self.listed_items.extend(self.parse_listing(response))
+        self.remaining_listings -= 1
+        if self.remaining_listings == 0:
+            yield from enrich_papers(self.listed_items)
+
+    def closed(self, reason):
+        if self.remaining_listings:
+            self.logger.error("Crawl closed with %d unprocessed category listings", self.remaining_listings)
+
+    def parse_listing(self, response):
         # 提取每篇论文的信息
         replacement_start = None
         for li in response.css("div[id=dlpage] ul li"):
@@ -47,7 +62,7 @@ class ArxivSpider(scrapy.Spider):
             if not abstract_link:
                 continue
                 
-            arxiv_id = abstract_link.split("/")[-1]
+            arxiv_id = urlsplit(abstract_link).path.removeprefix("/abs/")
             
             # 获取对应的论文描述部分 (dd元素)
             paper_dd = paper.xpath("following-sibling::dd[1]")
