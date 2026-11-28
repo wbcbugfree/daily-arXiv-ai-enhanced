@@ -35,7 +35,7 @@ def fetch_batch(client, paper_ids, *, versioned):
                         "summary": paper.summary,
                     }
         except arxiv.HTTPError as exc:
-            if exc.status != 429 and not 500 <= exc.status < 600:
+            if exc.status not in (406, 429) and not 500 <= exc.status < 600:
                 raise
             reason = f"HTTP {exc.status}"
         except (arxiv.UnexpectedEmptyPageError, requests.ConnectionError, requests.Timeout) as exc:
